@@ -65,3 +65,21 @@ jobs:
 
       - name: Build WPF project
         run: dotnet build src/AppleTVRemote.Windows/AppleTVRemote.Windows.csproj -c Release --no-restore
+
+  winui-app:
+    name: WinUI 3 app (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      - name: Restore WinUI project
+        run: dotnet restore src/AppleTVRemote.WinUI/AppleTVRemote.WinUI.csproj
+
+      - name: Build WinUI project (x64)
+        run: dotnet build src/AppleTVRemote.WinUI/AppleTVRemote.WinUI.csproj -c Release -p:Platform=x64 --no-restore

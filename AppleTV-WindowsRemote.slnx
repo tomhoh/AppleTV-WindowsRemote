@@ -4,5 +4,6 @@
     <Project Path="src/AppleTVProtocol/AppleTVProtocol.csproj" />
     <Project Path="src/AppleTVRemote.CLI/AppleTVRemote.CLI.csproj" />
     <Project Path="src/AppleTVRemote.Windows/AppleTVRemote.Windows.csproj" />
+    <Project Path="src/AppleTVRemote.WinUI/AppleTVRemote.WinUI.csproj" />
   </Folder>
 </Solution>

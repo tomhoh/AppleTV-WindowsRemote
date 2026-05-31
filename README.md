@@ -87,8 +87,8 @@ CI is in [`.github/workflows`](.github/workflows):
 
 | Workflow | Trigger | Output |
 |---|---|---|
-| `ci.yml`      | every push / PR to `main`                      | builds the library + CLI on Ubuntu **and** Windows, builds the WPF app on Windows, runs all xUnit tests |
-| `release.yml` | push of a tag matching `v*.*.*` (or manual run) | publishes per-tag artifacts: self-contained single-file WPF `.exe` (zip), self-contained CLI (zip), and an MSIX package + publisher `.cer` |
+| `ci.yml`      | every push / PR to `main`                      | builds the library + CLI on Ubuntu **and** Windows, builds the WPF app + the WinUI 3 app on Windows, runs all xUnit tests |
+| `release.yml` | push of a tag matching `v*.*.*` (or manual run) | publishes per-tag artifacts: self-contained WPF `.exe` (zip), self-contained WinUI 3 app (zip), self-contained CLI (zip), and **two** MSIX packages (WPF + WinUI, distinct package identities so they install side-by-side) + publisher `.cer` |
 
 To cut a release:
 

@@ -88,6 +88,27 @@ jobs:
           Compress-Archive -Path publish/cli/* -DestinationPath $zip -Force
           "CLI_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      # ─── Publish the WinUI 3 tray app (self-contained, win-x64) ───
+      # WinUI 3 doesn't support PublishSingleFile reliably (XAML metadata
+      # interop breaks), so we ship the publish folder zipped instead.
+      - name: Publish WinUI (win-x64 self-contained)
+        shell: pwsh
+        run: |
+          dotnet publish src/AppleTVRemote.WinUI/AppleTVRemote.WinUI.csproj `
+            -c Release `
+            -r win-x64 `
+            -p:Platform=x64 `
+            -p:Version=${{ steps.ver.outputs.version }} `
+            -p:DebugType=embedded `
+            -o publish/winui
+
+      - name: Zip unpackaged WinUI app
+        shell: pwsh
+        run: |
+          $zip = "AppleTVRemote-WinUI-${{ steps.ver.outputs.version }}-win-x64-selfcontained.zip"
+          Compress-Archive -Path publish/winui/* -DestinationPath $zip -Force
+          "WINUI_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       # ─── Build the MSIX package by wrapping the published WPF folder ───
       - name: Stage MSIX layout
         shell: pwsh
@@ -135,7 +156,7 @@ jobs:
           & '${{ steps.sdk.outputs.makeappx }}' pack /d publish/msix /p $msix /o
           "MSIX_FILE=$msix" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Generate self-signed cert and sign MSIX
+      - name: Generate self-signed cert and sign WPF MSIX
         shell: pwsh
         run: |
           # The Identity Publisher in the manifest must match this Subject EXACTLY.
@@ -153,9 +174,40 @@ jobs:
           # Also export the public cert so end-users can trust it before installing the MSIX
           $cer = "AppleTVRemote-Windows-${{ steps.ver.outputs.version }}-publisher.cer"
           Export-Certificate -Cert $cert -FilePath $cer | Out-Null
-          "PUB_CERT=$cer" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PUB_CERT=$cer"      | Out-File -FilePath $env:GITHUB_ENV -Append
+          "DEV_PFX=$pfx"       | Out-File -FilePath $env:GITHUB_ENV -Append
+          # Stash the password too so the WinUI signing step doesn't re-mint.
+          # (Workflow secrets are unavailable for sideloading; the cert is
+          # transient and exists only for this run, so the plaintext password
+          # in GITHUB_ENV is fine here.)
+          $plainPwd = [System.Net.NetworkCredential]::new('', $pwd).Password
+          "DEV_PFX_PWD=$plainPwd" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-          & '${{ steps.sdk.outputs.signtool }}' sign /fd SHA256 /a /f $pfx /p ([System.Net.NetworkCredential]::new('', $pwd).Password) $env:MSIX_FILE
+          & '${{ steps.sdk.outputs.signtool }}' sign /fd SHA256 /a /f $pfx /p $plainPwd $env:MSIX_FILE
+
+      # ─── Same MSIX flow for the WinUI 3 build ───
+      - name: Stage WinUI MSIX layout
+        shell: pwsh
+        run: |
+          $stage = 'publish/msix-winui'
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item -Recurse -Force 'publish/winui/*' $stage
+          ./packaging/GenerateAssets.ps1 -OutputDir (Join-Path $stage 'Assets')
+          $manifest = Get-Content -Raw packaging/Package.WinUI.appxmanifest
+          $manifest = $manifest -replace '#PACKAGE_VERSION#', '${{ steps.ver.outputs.msix_version }}'
+          $manifest | Set-Content -Encoding UTF8 (Join-Path $stage 'AppxManifest.xml')
+
+      - name: Pack WinUI MSIX
+        shell: pwsh
+        run: |
+          $msix = "AppleTVRemote-WinUI-${{ steps.ver.outputs.version }}-win-x64.msix"
+          & '${{ steps.sdk.outputs.makeappx }}' pack /d publish/msix-winui /p $msix /o
+          "MSIX_WINUI_FILE=$msix" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Sign WinUI MSIX
+        shell: pwsh
+        run: |
+          & '${{ steps.sdk.outputs.signtool }}' sign /fd SHA256 /a /f $env:DEV_PFX /p $env:DEV_PFX_PWD $env:MSIX_WINUI_FILE
 
       # ─── Upload artifacts so they're available even without a release ───
       # All three are continue-on-error so a hit on the account-wide
@@ -175,13 +227,29 @@ jobs:
           name: cli-selfcontained
           path: ${{ env.CLI_ZIP }}
 
-      - name: Upload MSIX
+      - name: Upload WinUI self-contained zip
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: msix-package
+          name: winui-selfcontained
+          path: ${{ env.WINUI_ZIP }}
+
+      - name: Upload WPF MSIX
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: msix-wpf
           path: |
             ${{ env.MSIX_FILE }}
+            ${{ env.PUB_CERT }}
+
+      - name: Upload WinUI MSIX
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: msix-winui
+          path: |
+            ${{ env.MSIX_WINUI_FILE }}
             ${{ env.PUB_CERT }}
 
       # ─── Attach to GitHub Release when run from a tag ───
@@ -193,8 +261,10 @@ jobs:
           generate_release_notes: true
           files: |
             ${{ env.WPF_ZIP }}
+            ${{ env.WINUI_ZIP }}
             ${{ env.CLI_ZIP }}
             ${{ env.MSIX_FILE }}
+            ${{ env.MSIX_WINUI_FILE }}
             ${{ env.PUB_CERT }}
           body: |
             ## Apple TV Windows Remote ${{ github.ref_name }}
@@ -203,10 +273,13 @@ jobs:
 
             | Asset | Notes |
             |-------|-------|
-            | `AppleTVRemote-Windows-*-win-x64-selfcontained.zip` | Unpackaged self-contained WPF tray app (no .NET runtime required) |
-            | `AppleTVRemote-CLI-*-win-x64-selfcontained.zip` | Self-contained CLI for scripting / debugging |
-            | `AppleTVRemote-Windows-*-win-x64.msix` | Signed MSIX installer |
-            | `AppleTVRemote-Windows-*-publisher.cer` | Public publisher certificate — import to **Local Machine → Trusted Root Certification Authorities** before installing the MSIX |
+            | `AppleTVRemote-Windows-*-win-x64-selfcontained.zip` | Unpackaged self-contained **WPF** tray app (no .NET runtime required) |
+            | `AppleTVRemote-WinUI-*-win-x64-selfcontained.zip`   | Unpackaged self-contained **WinUI 3** tray app (no .NET runtime required) |
+            | `AppleTVRemote-CLI-*-win-x64-selfcontained.zip`     | Self-contained CLI for scripting / debugging |
+            | `AppleTVRemote-Windows-*-win-x64.msix`              | Signed MSIX installer (**WPF** build) |
+            | `AppleTVRemote-WinUI-*-win-x64.msix`                | Signed MSIX installer (**WinUI 3** build) |
+            | `AppleTVRemote-Windows-*-publisher.cer`             | Public publisher certificate — import to **Local Machine → Trusted Root Certification Authorities** before installing either MSIX |
 
-            > Note: this build is signed with a **dev self-signed cert** generated in CI.
-            > Sideloading the MSIX requires trusting the publisher cert first.
+            > Note: both MSIX packages are signed with the same **dev self-signed cert** generated in CI.
+            > Sideloading either MSIX requires trusting the publisher cert first.
+            > The WPF and WinUI builds use distinct package identities so they can be installed side-by-side.

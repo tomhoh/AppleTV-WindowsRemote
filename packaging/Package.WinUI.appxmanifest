@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+    xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+    xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+    xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+    IgnorableNamespaces="uap rescap">
+
+  <!--
+    Distinct Identity Name from the WPF MSIX so both versions can be
+    sideloaded on the same machine without collision.
+  -->
+  <Identity
+      Name="AppleTV-WindowsRemote.WinUI"
+      Publisher="CN=Tom Hohensee"
+      Version="#PACKAGE_VERSION#" />
+
+  <Properties>
+    <DisplayName>Apple TV Windows Remote (WinUI)</DisplayName>
+    <PublisherDisplayName>Tom Hohensee</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Native Windows tray remote for Apple TV — WinUI 3 build.</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application
+        Id="AppleTVWindowsRemoteWinUI"
+        Executable="AppleTVRemote.WinUI.exe"
+        EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+          DisplayName="Apple TV Windows Remote (WinUI)"
+          Description="Native Windows tray remote for Apple TV — WinUI 3 build."
+          Square150x150Logo="Assets\Square150x150Logo.png"
+          Square44x44Logo="Assets\Square44x44Logo.png"
+          BackgroundColor="transparent">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
+  </Capabilities>
+</Package>
