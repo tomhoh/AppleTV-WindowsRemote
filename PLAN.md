@@ -61,22 +61,42 @@ mapping:
   (or `~/.config/...` on macOS/Linux). One file per paired Apple TV.
 - `HapCredentials` matches what pair-setup will produce.
 
-### 2c. HAP pair-setup *(next)*
+### 2c. HAP pair-setup *(done)*
 
-- Companion frame transport (raw TCP, 4-byte length-prefixed binary
-  frames; **not** HTTP — that's the older HAP).
-- Pair-setup M1/M3/M5 builders + M2/M4/M6 parsers (TLV8 inside OPACK
-  envelope inside Companion frame).
-- Drive the existing `Srp6aClient` through the 6-step exchange.
-- Persist the resulting `HapCredentials` via `CredentialStore`.
+- `src/AppleTVProtocol/CompanionFrame.cs` — 4-byte-header frame
+  encode/decode (8 tests).
+- `src/AppleTVProtocol/CompanionCipher.cs` — counter-nonce
+  ChaCha20-Poly1305 (8 tests, byte-exact vs pyatv).
+- `src/AppleTVProtocol/CompanionConnection.cs` — async TCP + read
+  loop + optional encryption (10 tests over TcpListener loopback).
+- `src/AppleTVProtocol/PairSetup.cs` — M1/M3/M5 builders, M2/M4/M6
+  parser, async driver (9 tests, byte-exact envelopes vs pyatv).
+- CLI: `atv pair <host> <port> [--name <n>]`, `atv list`, `atv unpair`.
 
-### 2d. HAP pair-verify *(after pair-setup)*
+### 2d. HAP pair-verify *(done)*
 
-- Curve25519 (X25519) session-key exchange on every reconnect using
-  the stored credentials. Already have `X25519PrivateKey.Agree` and
-  `Ed25519PrivateKey.Sign` ready.
+- `src/AppleTVProtocol/PairVerify.cs` (4 tests).
+- 3-frame X25519 ECDH + Ed25519 cross-signature exchange.
+- On success, installs `ClientEncrypt-main` / `ServerEncrypt-main`
+  session keys on the connection so subsequent E_OPACK frames are
+  encrypted.
 
-**Deliverable:** `atv pair <device-id-or-name>` works end-to-end.
+**Deliverable met:** `atv pair`, `atv list`, `atv unpair` work; pair-verify
+runs and switches the connection into encrypted mode (covered by the
+end-to-end test against a fake-AppleTV loopback server).
+
+## Phase 3 — Companion session + HID commands *(done)*
+
+- `src/AppleTVProtocol/CompanionSession.cs` (6 tests).
+- XID-tracked request/response + fire-and-forget events over E_OPACK.
+- `HidCommand` enum (Up/Down/Left/Right/Select/Menu/Home/PlayPause/
+  Volume±/Wake/Sleep/Siri/Screensaver/Channel±/Guide/Page±).
+- `SendHidAsync(cmd, down)` + `PressAsync(cmd, hold?)` helpers.
+- CLI: `atv key <device-id> <host> <port> <button> [--hold-ms N]`.
+
+**Deliverable met:** `atv key <id> <host> <port> home` etc. should
+work against a real Apple TV (haven't tested live yet — author has
+no TV on the dev network).
 
 ## Phase 3 — Companion session + basic commands (1 week)
 
