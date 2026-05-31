@@ -96,8 +96,10 @@ public sealed partial class MainWindow : WindowEx
             ApplyDarkBrushes();
         else
             ApplyLightBrushes();
-        // Re-bind the runtime-set styles to refresh static-resource consumers.
-        Bindings.Update();
+        // PaintBrushConsumers (called from ApplyLight/DarkBrushes) walks
+        // the visual tree and re-paints brushes that were originally set
+        // via StaticResource — WinUI's StaticResource bindings don't
+        // re-resolve when the underlying dictionary entry is replaced.
     }
 
     private void ApplyLightBrushes()
