@@ -8,6 +8,11 @@
 
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
+    <PackageReference Include="Makaretu.Dns.Multicast" Version="0.27.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AppleTVProtocol.Tests" />
   </ItemGroup>
 
 </Project>
