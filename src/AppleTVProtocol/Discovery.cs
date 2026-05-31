@@ -39,8 +39,56 @@ public sealed record AppleTVDevice(
     /// <summary>The "deviceid" TXT value (usually a MAC-like 6-byte hex) — stable across name changes.</summary>
     public string? DeviceId => TxtRecords.GetValueOrDefault("deviceid");
 
-    /// <summary>The "model" TXT value (e.g. "AppleTV6,2", "AppleTV11,1").</summary>
+    /// <summary>The "model" TXT value (e.g. "AppleTV6,2", "AppleTV11,1", "AudioAccessory1,1").</summary>
     public string? Model => TxtRecords.GetValueOrDefault("model");
+
+    /// <summary>
+    /// String form of <see cref="Address"/> — surfaced as its own
+    /// property so WPF XAML can bind to it (Run.Text doesn't render
+    /// IPAddress out of the box).
+    /// </summary>
+    public string AddressString => Address.ToString();
+
+    /// <summary>
+    /// True if the model TXT record looks like an Apple TV or HomePod —
+    /// the two device families that actually accept Companion-protocol
+    /// pairings. Used to filter out random other devices that also
+    /// advertise <c>_companion-link._tcp.local.</c> (iPhones in screen-
+    /// mirroring mode, Macs with sharing on, etc.).
+    /// </summary>
+    public bool IsAppleDevice
+    {
+        get
+        {
+            var m = Model;
+            if (string.IsNullOrEmpty(m)) return false;
+            return m.StartsWith("AppleTV",        StringComparison.OrdinalIgnoreCase)
+                || m.StartsWith("AudioAccessory", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    /// <summary>
+    /// A friendlier label for the model TXT value. "AppleTV11,1" → "Apple TV 4K",
+    /// "AudioAccessory1,1" → "HomePod", and falls back to the raw model
+    /// string when we don't recognise the code.
+    /// </summary>
+    public string ModelFriendly => Model switch
+    {
+        null or ""        => "Unknown device",
+        "AppleTV5,3"      => "Apple TV HD",
+        "AppleTV6,2"      => "Apple TV 4K",
+        "AppleTV11,1"     => "Apple TV 4K (2nd gen)",
+        "AppleTV14,1"     => "Apple TV 4K (3rd gen)",
+        "AudioAccessory1,1" => "HomePod",
+        "AudioAccessory5,1" => "HomePod mini",
+        "AudioAccessory6,1" => "HomePod (2nd gen)",
+        var x when x.StartsWith("AppleTV",        StringComparison.OrdinalIgnoreCase) => "Apple TV (" + x + ")",
+        var x when x.StartsWith("AudioAccessory", StringComparison.OrdinalIgnoreCase) => "HomePod (" + x + ")",
+        var x => x,
+    };
+
+    /// <summary>"Apple TV 4K · 192.168.1.42:49152" — convenience for list rows.</summary>
+    public string Subtitle => $"{ModelFriendly} · {AddressString}:{Port}";
 }
 
 public sealed class DeviceDiscovery : IDisposable
@@ -55,6 +103,10 @@ public sealed class DeviceDiscovery : IDisposable
     private readonly ServiceDiscovery _sd = new();
     private readonly ConcurrentDictionary<string, AppleTVDevice> _devices = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _service;
+    private System.Threading.Timer? _requeryTimer;
+
+    /// <summary>How often to re-issue the mDNS query while running.</summary>
+    public TimeSpan RequeryInterval { get; set; } = TimeSpan.FromSeconds(2);
 
     /// <summary>Raised when a new device is fully resolved (SRV + A/AAAA + TXT all present).</summary>
     public event EventHandler<AppleTVDevice>? Discovered;
@@ -69,17 +121,35 @@ public sealed class DeviceDiscovery : IDisposable
     }
 
     /// <summary>
-    /// Send an active query for the configured service and start listening.
-    /// Newly-discovered devices arrive via the <see cref="Discovered"/> event.
-    /// Call <see cref="Dispose"/> (or use a <c>using</c>) when done.
+    /// Send an active query for the configured service and start a periodic
+    /// re-query timer (<see cref="RequeryInterval"/>). The first query
+    /// fires immediately; subsequent ones fire on the interval until
+    /// <see cref="Dispose"/>. Slow / sleeping devices often miss the first
+    /// shout — repeating gives them a chance to answer.
     /// </summary>
     public void Start()
     {
-        _sd.QueryServiceInstances(_service);
+        Requery();
+        // Drop any prior timer (calling Start() twice shouldn't double-fire).
+        _requeryTimer?.Dispose();
+        _requeryTimer = new System.Threading.Timer(
+            _ => Requery(),
+            state: null,
+            dueTime:  RequeryInterval,
+            period:   RequeryInterval);
+    }
+
+    private void Requery()
+    {
+        try { _sd.QueryServiceInstances(_service); }
+        catch { /* ignore transient socket errors; the next tick retries */ }
     }
 
     /// <summary>
     /// Convenience: browse for <paramref name="duration"/> and return everything seen.
+    /// The re-query timer keeps running until the caller disposes this object —
+    /// devices that arrive after <paramref name="duration"/> still fire
+    /// <see cref="Discovered"/>, they're just not in the snapshot we return.
     /// </summary>
     public async Task<IReadOnlyList<AppleTVDevice>> BrowseAsync(TimeSpan duration, CancellationToken ct = default)
     {
@@ -91,6 +161,8 @@ public sealed class DeviceDiscovery : IDisposable
 
     public void Dispose()
     {
+        _requeryTimer?.Dispose();
+        _requeryTimer = null;
         _sd.ServiceInstanceDiscovered -= OnServiceInstanceDiscovered;
         _sd.Dispose();
     }

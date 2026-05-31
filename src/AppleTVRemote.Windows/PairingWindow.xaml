@@ -10,6 +10,8 @@
         Foreground="{DynamicResource WindowForeground}"
         TextOptions.TextFormattingMode="Display">
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
         <!-- Light-mode defaults; ApplyTheme() in code-behind re-seeds for dark. -->
         <SolidColorBrush x:Key="WindowBackground" Color="#FFF8F8F8" />
         <SolidColorBrush x:Key="WindowForeground" Color="#E6000000" />
@@ -57,7 +59,9 @@
                        FontSize="11" Opacity="0.7" TextWrapping="Wrap" />
         </StackPanel>
 
-        <!-- Stage 1: discovered-device list -->
+        <!-- Stage 1: discovered-device list. Run.Text doesn't render
+             IPAddress without a converter; we bind to AddressString /
+             Subtitle (pre-computed strings on AppleTVDevice) instead. -->
         <ListBox x:Name="DeviceList"
                  Grid.Row="1"
                  SelectionChanged="OnDeviceSelected"
@@ -65,14 +69,26 @@
                  BorderBrush="#33000000">
             <ListBox.ItemTemplate>
                 <DataTemplate>
-                    <StackPanel Margin="8,6">
-                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                        <TextBlock FontSize="10" Opacity="0.6">
-                            <Run Text="{Binding Address}" />
-                            <Run Text=":" />
-                            <Run Text="{Binding Port}" />
-                        </TextBlock>
-                    </StackPanel>
+                    <Grid Margin="8,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding Subtitle}" FontSize="11" Opacity="0.6" />
+                        </StackPanel>
+                        <!-- Mark devices that look like an Apple TV/HomePod (model
+                             TXT begins with AppleTV* or AudioAccessory*) so they
+                             stand out from the iPhone/Mac/etc. noise. -->
+                        <TextBlock Grid.Column="1"
+                                   Text="✓"
+                                   FontWeight="Bold"
+                                   Foreground="#2C7BE5"
+                                   VerticalAlignment="Center"
+                                   Margin="4,0,0,0"
+                                   Visibility="{Binding IsAppleDevice, Converter={StaticResource BoolToVis}}" />
+                    </Grid>
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>

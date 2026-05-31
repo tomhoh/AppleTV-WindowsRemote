@@ -87,7 +87,7 @@
                                         <TextBlock Text="{Binding Name}"
                                                    FontSize="13" FontWeight="SemiBold"
                                                    MaxLines="1" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{Binding Address}"
+                                        <TextBlock Text="{Binding Subtitle}"
                                                    FontSize="11" Opacity="0.6"
                                                    MaxLines="1" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>

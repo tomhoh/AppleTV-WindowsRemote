@@ -117,18 +117,28 @@ public partial class PairingWindow : Window
                 // De-dup by full Bonjour name.
                 foreach (var existing in _devices)
                     if (existing.FullName == dev.FullName) return;
-                _devices.Add(dev);
+                // Apple TVs / HomePods at the top of the list, everything
+                // else (iPhones in screen-mirror mode, Macs with Sharing
+                // on, etc.) below. Mixed bag because everything that
+                // advertises _companion-link._tcp shows up here.
+                if (dev.IsAppleDevice)
+                {
+                    int i = 0;
+                    while (i < _devices.Count && _devices[i].IsAppleDevice) i++;
+                    _devices.Insert(i, dev);
+                }
+                else
+                {
+                    _devices.Add(dev);
+                }
                 UpdateHeaderForCount();
             });
 
-        try
-        {
-            // Browse for a few seconds then leave the listener up — late
-            // arrivals still get added if the user is waiting.
-            await _discovery.BrowseAsync(TimeSpan.FromSeconds(4), _discoveryCts.Token);
-            UpdateHeaderForCount();
-        }
-        catch (OperationCanceledException) { /* user closed */ }
+        // Just start the discovery — re-query timer keeps shouting until
+        // the window closes. No deadline; the user picks when they're done.
+        _discovery.Start();
+        await Task.CompletedTask;
+        UpdateHeaderForCount();
     }
 
     private void UpdateHeaderForCount()
@@ -232,12 +242,31 @@ public partial class PairingWindow : Window
         }
         catch (Exception ex)
         {
-            ShowPinError(ex.Message);
+            ShowPinError(BuildErrorMessage(ex));
         }
         finally
         {
             SetBusy(false);
         }
+    }
+
+    /// <summary>
+    /// Walk the inner-exception chain so the user sees the actual cause
+    /// (the outer HapPairingException is usually a one-liner like
+    /// "M6 decrypt failed (wrong PIN?)" but the inner CryptographicException
+    /// has the real detail).
+    /// </summary>
+    private static string BuildErrorMessage(Exception ex)
+    {
+        var msgs = new System.Collections.Generic.List<string> { $"{ex.GetType().Name}: {ex.Message}" };
+        var inner = ex.InnerException;
+        int safety = 0;
+        while (inner is not null && safety++ < 5)
+        {
+            msgs.Add($"  → {inner.GetType().Name}: {inner.Message}");
+            inner = inner.InnerException;
+        }
+        return string.Join("\n", msgs);
     }
 
     private void ShowPinError(string text)

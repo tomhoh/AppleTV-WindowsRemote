@@ -81,16 +81,23 @@ public sealed partial class PairingWindow : WindowEx
             {
                 foreach (var existing in _devices)
                     if (existing.FullName == dev.FullName) return;
-                _devices.Add(dev);
+                // Apple TVs / HomePods first, everything else below.
+                if (dev.IsAppleDevice)
+                {
+                    int i = 0;
+                    while (i < _devices.Count && _devices[i].IsAppleDevice) i++;
+                    _devices.Insert(i, dev);
+                }
+                else
+                {
+                    _devices.Add(dev);
+                }
                 UpdateDeviceListVisibility();
             });
 
-        try
-        {
-            await _discovery.BrowseAsync(TimeSpan.FromSeconds(4), _discoveryCts.Token);
-            UpdateDeviceListVisibility();
-        }
-        catch (OperationCanceledException) { }
+        _discovery.Start();
+        await Task.CompletedTask;
+        UpdateDeviceListVisibility();
     }
 
     private void UpdateDeviceListVisibility()
@@ -202,12 +209,30 @@ public sealed partial class PairingWindow : WindowEx
         }
         catch (Exception ex)
         {
-            ShowPinError(ex.Message);
+            ShowPinError(BuildErrorMessage(ex));
         }
         finally
         {
             SetBusy(false);
         }
+    }
+
+    /// <summary>
+    /// Walk the inner-exception chain so the user sees the actual cause —
+    /// HapPairingException usually just says "M6 decrypt failed" while
+    /// the inner CryptographicException carries the real detail.
+    /// </summary>
+    private static string BuildErrorMessage(Exception ex)
+    {
+        var msgs = new System.Collections.Generic.List<string> { $"{ex.GetType().Name}: {ex.Message}" };
+        var inner = ex.InnerException;
+        int safety = 0;
+        while (inner is not null && safety++ < 5)
+        {
+            msgs.Add($"  → {inner.GetType().Name}: {inner.Message}");
+            inner = inner.InnerException;
+        }
+        return string.Join("\n", msgs);
     }
 
     private void ShowPinError(string text)
