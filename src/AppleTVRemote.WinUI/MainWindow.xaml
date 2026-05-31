@@ -11,23 +11,36 @@
     IsResizable="False">
 
     <!--
-      Brushes live in App.xaml ThemeDictionaries and bind here via
-      {ThemeResource ...} — WinUI's native theme-resolution mechanism.
-      MainWindow.ApplyTheme() flips Root.RequestedTheme between Light
-      and Dark, which causes every ThemeResource consumer to re-resolve
-      automatically without us walking the visual tree.
+      Title bar / chrome is removed in code-behind via an OverlappedPresenter
+      configured borderless. The custom "close X" button in the top-left of
+      the remote replaces the standard window-control buttons.
+
+      All theme-sensitive brushes live in the Grid.Resources below and get
+      re-seeded by MainWindow.ApplyTheme() when ActualThemeChanged fires
+      (which the framework raises when the system theme flips).
     -->
 
     <winuiex:WindowEx.SystemBackdrop>
         <MicaBackdrop Kind="BaseAlt" />
     </winuiex:WindowEx.SystemBackdrop>
 
-    <Grid x:Name="Root">
+    <Grid x:Name="Root" RequestedTheme="Default">
         <Grid.Resources>
+            <SolidColorBrush x:Key="ButtonMaterial"   Color="#33FFFFFF" />
+            <SolidColorBrush x:Key="ButtonMaterialHv" Color="#55FFFFFF" />
+            <SolidColorBrush x:Key="ButtonMaterialDn" Color="#80FFFFFF" />
+            <SolidColorBrush x:Key="ButtonGlyph"      Color="#E6FFFFFF" />
+            <SolidColorBrush x:Key="ButtonStroke"     Color="#33FFFFFF" />
+            <SolidColorBrush x:Key="ClickpadRing"     Color="#33FFFFFF" />
+            <SolidColorBrush x:Key="ClickpadHover"    Color="#1AFFFFFF" />
+            <SolidColorBrush x:Key="ClickpadPressed"  Color="#33FFFFFF" />
+            <SolidColorBrush x:Key="SelectFill"       Color="#80FFFFFF" />
+            <SolidColorBrush x:Key="SelectHoverFill"  Color="#A6FFFFFF" />
+
             <Style x:Key="PillButton" TargetType="Button">
-                <Setter Property="Foreground"  Value="{ThemeResource ButtonGlyph}" />
-                <Setter Property="Background"  Value="{ThemeResource ButtonMaterial}" />
-                <Setter Property="BorderBrush" Value="{ThemeResource ButtonStroke}" />
+                <Setter Property="Foreground" Value="{StaticResource ButtonGlyph}" />
+                <Setter Property="Background" Value="{StaticResource ButtonMaterial}" />
+                <Setter Property="BorderBrush" Value="{StaticResource ButtonStroke}" />
                 <Setter Property="BorderThickness" Value="0.5" />
                 <Setter Property="CornerRadius"    Value="22" />
                 <Setter Property="Width"  Value="44" />
@@ -95,24 +108,24 @@
                   PointerReleased="OnClickpadPointerReleased"
                   PointerExited="OnClickpadPointerExited">
 
-                <Ellipse Fill="{ThemeResource ClickpadRing}"
-                         Stroke="{ThemeResource ButtonStroke}"
+                <Ellipse Fill="{StaticResource ClickpadRing}"
+                         Stroke="{StaticResource ButtonStroke}"
                          StrokeThickness="0.5" />
 
                 <Path x:Name="HoverQuadrant"
-                      Fill="{ThemeResource ClickpadHover}"
+                      Fill="{StaticResource ClickpadHover}"
                       IsHitTestVisible="False"
                       Visibility="Collapsed" />
 
                 <Path x:Name="QuadrantHighlight"
-                      Fill="{ThemeResource ClickpadPressed}"
+                      Fill="{StaticResource ClickpadPressed}"
                       IsHitTestVisible="False"
                       Visibility="Collapsed" />
 
                 <Ellipse x:Name="SelectDisc"
                          Width="72" Height="72"
-                         Fill="{ThemeResource SelectFill}"
-                         Stroke="{ThemeResource ButtonStroke}"
+                         Fill="{StaticResource SelectFill}"
+                         Stroke="{StaticResource ButtonStroke}"
                          StrokeThickness="0.5"
                          HorizontalAlignment="Center"
                          VerticalAlignment="Center"
@@ -156,8 +169,8 @@
                         Width="44" Height="92"
                         HorizontalAlignment="Right"
                         CornerRadius="22"
-                        Background="{ThemeResource ButtonMaterial}"
-                        BorderBrush="{ThemeResource ButtonStroke}"
+                        Background="{StaticResource ButtonMaterial}"
+                        BorderBrush="{StaticResource ButtonStroke}"
                         BorderThickness="0.5"
                         PointerPressed="OnVolumePointerPressed">
                     <Grid>
@@ -167,18 +180,20 @@
                             <RowDefinition />
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0"
+                                   x:Name="VolUpGlyph"
                                    FontFamily="Segoe MDL2 Assets"
                                    FontSize="11"
-                                   Foreground="{ThemeResource ButtonGlyph}"
+                                   Foreground="{StaticResource ButtonGlyph}"
                                    Text="&#xE995;"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center"
                                    IsHitTestVisible="False" />
-                        <Rectangle Grid.Row="1" Fill="{ThemeResource ButtonStroke}" />
+                        <Rectangle Grid.Row="1" Fill="{StaticResource ButtonStroke}" />
                         <TextBlock Grid.Row="2"
+                                   x:Name="VolDownGlyph"
                                    FontFamily="Segoe MDL2 Assets"
                                    FontSize="11"
-                                   Foreground="{ThemeResource ButtonGlyph}"
+                                   Foreground="{StaticResource ButtonGlyph}"
                                    Text="&#xE993;"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center"

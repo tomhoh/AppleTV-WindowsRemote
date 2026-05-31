@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 //
-// WinUI 3 Mac-style remote.
+// WinUI 3 mirror of the WPF Mac-style remote.
 //
-// Theme handling is intentionally minimal: brushes live in
-// Application.Resources.ThemeDictionaries (Light/Dark) and consumers
-// bind via {ThemeResource ...}. All we do here is set
-// Root.RequestedTheme to match the system, and WinUI re-resolves
-// every ThemeResource consumer for us — no manual brush walking.
+// - Borderless window (OverlappedPresenter with HasTitleBar=false +
+//   HasBorder=true), with a custom close-X in the top-left of the UI.
+// - Mica BaseAlt backdrop adapts to system theme automatically; for
+//   our own brushes (button material, click ring, etc.) we listen to
+//   ActualThemeChanged and re-seed the Grid resources.
+// - Soft hover quadrant + center-disc hover feedback on the clickpad.
 
 using System;
 using System.Threading.Tasks;
@@ -19,7 +20,8 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
-using Windows.UI.ViewManagement;
+using Windows.UI;
+using Windows.UI.ViewManagement;   // UISettings — canonical system-theme source on Windows
 using WinUIEx;
 
 namespace AppleTVRemote.WinUI;
@@ -40,7 +42,6 @@ public sealed partial class MainWindow : WindowEx
     private Point _dragBaseline;
     private double _totalDragDistance;
     private HidCommand? _hoveredRegion;
-
     private readonly UISettings _uiSettings = new();
     private Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher;
 
@@ -49,12 +50,14 @@ public sealed partial class MainWindow : WindowEx
         InitializeComponent();
 
         ApplyBorderlessPresenter();
-        _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         ApplyTheme();
         RefreshDevices();
 
+        _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+
         // UISettings.ColorValuesChanged is the canonical signal for the
-        // user toggling system light/dark — fires off the UI thread.
+        // user toggling system light/dark — fires off the UI thread, so
+        // marshal back via the dispatcher.
         _uiSettings.ColorValuesChanged += OnSystemColorsChanged;
 
         Activated += (_, args) =>
@@ -65,7 +68,8 @@ public sealed partial class MainWindow : WindowEx
             }
             else
             {
-                // Re-check on each show in case theme flipped while hidden.
+                // Re-check theme on each show — handles the case where
+                // the user changed system theme while the popup was hidden.
                 ApplyTheme();
             }
         };
@@ -74,6 +78,11 @@ public sealed partial class MainWindow : WindowEx
             _uiSettings.ColorValuesChanged -= OnSystemColorsChanged;
             await TeardownActiveAsync();
         };
+    }
+
+    private void OnSystemColorsChanged(UISettings sender, object args)
+    {
+        _dispatcher?.TryEnqueue(ApplyTheme);
     }
 
     public void PositionNearTray() => TrayWindowPositioner.PositionNearCursor(this);
@@ -89,32 +98,6 @@ public sealed partial class MainWindow : WindowEx
         }
     }
 
-    // ─── Theme adaptation ──────────────────────────────────────────
-
-    private void OnSystemColorsChanged(UISettings sender, object args)
-        => _dispatcher?.TryEnqueue(ApplyTheme);
-
-    /// <summary>
-    /// Flip Root.RequestedTheme based on UISettings — the canonical
-    /// Windows source of truth. {ThemeResource ...} consumers in the
-    /// XAML re-resolve automatically.
-    /// </summary>
-    private void ApplyTheme()
-    {
-        Root.RequestedTheme = IsSystemDark() ? ElementTheme.Dark : ElementTheme.Light;
-    }
-
-    private bool IsSystemDark()
-    {
-        var bg = _uiSettings.GetColorValue(UIColorType.Background);
-        return (bg.R + bg.G + bg.B) < 384;   // dark→≈0, light→≈765
-    }
-
-    /// <summary>Public so PairingDialog can inherit the same theme.</summary>
-    public ElementTheme CurrentTheme => Root.RequestedTheme;
-
-    // ─── Device list / connection management ───────────────────────
-
     private void RefreshDevices()
     {
         DeviceCombo.ItemsSource = null;
@@ -126,11 +109,126 @@ public sealed partial class MainWindow : WindowEx
             DeviceCombo.SelectedIndex = 0;
             DeviceCombo.Visibility = Visibility.Visible;
         }
+    }
+
+    // ─── Theme adaptation ──────────────────────────────────────────
+
+    private void ApplyTheme()
+    {
+        if (IsSystemDark())
+            ApplyDarkBrushes();
         else
+            ApplyLightBrushes();
+        // PaintBrushConsumers (called from ApplyLight/DarkBrushes) walks
+        // the visual tree and re-paints brushes that were originally set
+        // via StaticResource — WinUI's StaticResource bindings don't
+        // re-resolve when the underlying dictionary entry is replaced.
+    }
+
+    /// <summary>
+    /// Canonical system-theme check on Windows. UISettings's Background
+    /// colour is the OS-active window background: black in dark mode,
+    /// white in light mode. This is what Microsoft's own apps use, and
+    /// is more reliable than ActualTheme on a Mica-backdrop window
+    /// (which doesn't always propagate the system theme into the
+    /// element-theme chain).
+    /// </summary>
+    private bool IsSystemDark()
+    {
+        var bg = _uiSettings.GetColorValue(UIColorType.Background);
+        return (bg.R + bg.G + bg.B) < 384;   // dark → near 0, light → near 765
+    }
+
+    private void ApplyLightBrushes()
+    {
+        Root.Resources["ButtonMaterial"]    = Solid(0x33, 0x00, 0x00, 0x00);
+        Root.Resources["ButtonMaterialHv"]  = Solid(0x52, 0x00, 0x00, 0x00);
+        Root.Resources["ButtonMaterialDn"]  = Solid(0x72, 0x00, 0x00, 0x00);
+        Root.Resources["ButtonGlyph"]       = Solid(0xE6, 0x00, 0x00, 0x00);
+        Root.Resources["ButtonStroke"]      = Solid(0x40, 0x00, 0x00, 0x00);
+        Root.Resources["ClickpadRing"]      = Solid(0x26, 0x00, 0x00, 0x00);
+        Root.Resources["ClickpadHover"]     = Solid(0x1E, 0x00, 0x00, 0x00);
+        Root.Resources["ClickpadPressed"]   = Solid(0x33, 0x00, 0x00, 0x00);
+        Root.Resources["SelectFill"]        = Solid(0x80, 0xFF, 0xFF, 0xFF);
+        Root.Resources["SelectHoverFill"]   = Solid(0xAA, 0xFF, 0xFF, 0xFF);
+        PaintBrushConsumers();
+    }
+
+    private void ApplyDarkBrushes()
+    {
+        Root.Resources["ButtonMaterial"]    = Solid(0x26, 0xFF, 0xFF, 0xFF);
+        Root.Resources["ButtonMaterialHv"]  = Solid(0x40, 0xFF, 0xFF, 0xFF);
+        Root.Resources["ButtonMaterialDn"]  = Solid(0x5C, 0xFF, 0xFF, 0xFF);
+        Root.Resources["ButtonGlyph"]       = Solid(0xE6, 0xFF, 0xFF, 0xFF);
+        Root.Resources["ButtonStroke"]      = Solid(0x33, 0xFF, 0xFF, 0xFF);
+        Root.Resources["ClickpadRing"]      = Solid(0x1A, 0xFF, 0xFF, 0xFF);
+        Root.Resources["ClickpadHover"]     = Solid(0x1A, 0xFF, 0xFF, 0xFF);
+        Root.Resources["ClickpadPressed"]   = Solid(0x33, 0xFF, 0xFF, 0xFF);
+        Root.Resources["SelectFill"]        = Solid(0x66, 0xFF, 0xFF, 0xFF);
+        Root.Resources["SelectHoverFill"]   = Solid(0x80, 0xFF, 0xFF, 0xFF);
+        PaintBrushConsumers();
+    }
+
+    /// <summary>
+    /// WinUI XAML's StaticResource bindings don't re-resolve when the
+    /// underlying ResourceDictionary entry is replaced. Touch the
+    /// consumers explicitly so the new brushes take effect.
+    /// </summary>
+    private void PaintBrushConsumers()
+    {
+        var material  = (Brush)Root.Resources["ButtonMaterial"];
+        var stroke    = (Brush)Root.Resources["ButtonStroke"];
+        var glyph     = (Brush)Root.Resources["ButtonGlyph"];
+        var ring      = (Brush)Root.Resources["ClickpadRing"];
+        var hover     = (Brush)Root.Resources["ClickpadHover"];
+        var pressed   = (Brush)Root.Resources["ClickpadPressed"];
+        var selectFill= (Brush)Root.Resources["SelectFill"];
+
+        SelectDisc.Fill   = selectFill;
+        SelectDisc.Stroke = stroke;
+        HoverQuadrant.Fill     = hover;
+        QuadrantHighlight.Fill = pressed;
+
+        VolumeRocker.Background  = material;
+        VolumeRocker.BorderBrush = stroke;
+        VolUpGlyph.Foreground    = glyph;
+        VolDownGlyph.Foreground  = glyph;
+
+        ApplyToButton(CloseBtn, material, stroke, glyph);
+        ApplyToButton(PowerBtn, material, stroke, glyph);
+
+        // The other pill buttons live inside Grids by index; walk Root.
+        WalkButtons(Root, material, stroke, glyph);
+
+        // Outer ring of the clickpad is the first Ellipse child.
+        if (Clickpad.Children.Count > 0 && Clickpad.Children[0] is Ellipse outer)
         {
-            DeviceCombo.Visibility = Visibility.Collapsed;
+            outer.Fill   = ring;
+            outer.Stroke = stroke;
         }
     }
+
+    private static void ApplyToButton(Button b, Brush bg, Brush stroke, Brush glyph)
+    {
+        b.Background  = bg;
+        b.BorderBrush = stroke;
+        b.Foreground  = glyph;
+    }
+
+    private static void WalkButtons(DependencyObject root, Brush bg, Brush stroke, Brush glyph)
+    {
+        int n = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < n; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is Button b && b.Name is not "CloseBtn" and not "PowerBtn")
+                ApplyToButton(b, bg, stroke, glyph);
+            WalkButtons(child, bg, stroke, glyph);
+        }
+    }
+
+    private static SolidColorBrush Solid(byte a, byte r, byte g, byte b)
+        => new SolidColorBrush(Color.FromArgb(a, r, g, b));
 
     // ─── Clickpad gestures ─────────────────────────────────────────
 
@@ -194,8 +292,8 @@ public sealed partial class MainWindow : WindowEx
     private void ApplyHoverRegion(HidCommand? region)
     {
         SelectDisc.Fill = (region == HidCommand.Select)
-            ? (Brush)Application.Current.Resources["SelectHoverFill"]
-            : (Brush)Application.Current.Resources["SelectFill"];
+            ? (Brush)Root.Resources["SelectHoverFill"]
+            : (Brush)Root.Resources["SelectFill"];
 
         if (region is null or HidCommand.Select)
         {
@@ -227,11 +325,11 @@ public sealed partial class MainWindow : WindowEx
         if (cmd == HidCommand.Select)
         {
             SelectScale.ScaleX = 0.94; SelectScale.ScaleY = 0.94;
-            _ = Task.Delay(180).ContinueWith(_ =>
-                _dispatcher?.TryEnqueue(() =>
-                {
-                    SelectScale.ScaleX = 1.0; SelectScale.ScaleY = 1.0;
-                }));
+            var dq = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+            _ = Task.Delay(180).ContinueWith(_ => dq.TryEnqueue(() =>
+            {
+                SelectScale.ScaleX = 1.0; SelectScale.ScaleY = 1.0;
+            }));
             return;
         }
         var geo = new PathGeometry();
@@ -239,17 +337,15 @@ public sealed partial class MainWindow : WindowEx
         QuadrantHighlight.Data = geo;
         QuadrantHighlight.Opacity = 1.0;
         QuadrantHighlight.Visibility = Visibility.Visible;
+        var dq2 = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         _ = Task.Delay(220).ContinueWith(_ =>
-            _dispatcher?.TryEnqueue(() =>
-            {
-                QuadrantHighlight.Visibility = Visibility.Collapsed;
-            }));
+            dq2.TryEnqueue(() => { QuadrantHighlight.Visibility = Visibility.Collapsed; }));
     }
 
     private static PathFigure BuildQuadrantWedge(HidCommand cmd)
     {
-        // Donut slice — outer arc, radial line, inner arc, close. Never
-        // crosses into the area under the center select disc.
+        // Ring-shaped wedge — covers ONLY the outer quadrant, never bleeds
+        // into the area under the center select disc.
         double rOuter = ClickpadDiameter      / 2;
         double rInner = ClickpadInnerDiameter / 2;
         var center = new Point(rOuter, rOuter);
@@ -321,11 +417,7 @@ public sealed partial class MainWindow : WindowEx
     private async void OnOpenPairClicked(object sender, RoutedEventArgs e)
     {
         if (Content?.XamlRoot is null) return;
-        var dlg = new PairingDialog
-        {
-            XamlRoot      = Content.XamlRoot,
-            RequestedTheme = Root.RequestedTheme,   // match popup theme
-        };
+        var dlg = new PairingDialog { XamlRoot = Content.XamlRoot };
         var result = await dlg.ShowAsync();
         if (result == ContentDialogResult.Primary && dlg.PairedCredentials is { } c)
         {
@@ -397,7 +489,6 @@ public sealed partial class MainWindow : WindowEx
             Content         = text,
             CloseButtonText = "OK",
             XamlRoot        = Content.XamlRoot,
-            RequestedTheme  = Root.RequestedTheme,
         };
         await dlg.ShowAsync();
     }
