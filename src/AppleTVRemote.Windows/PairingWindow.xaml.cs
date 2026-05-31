@@ -110,7 +110,11 @@ public partial class PairingWindow : Window
         SubText.Text    = "Make sure your TV is awake and on the same network.";
 
         _discoveryCts = new CancellationTokenSource();
-        _discovery = new DeviceDiscovery();
+        // Query BOTH companion-link and airplay — pyatv does this too.
+        // Some Apple TVs respond faster to one than the other, and the
+        // AirPlay TXT carries a 'model' field that lets us recognise the
+        // device even when the companion-link advert hasn't arrived yet.
+        _discovery = new DeviceDiscovery(DeviceDiscovery.CompanionAndAirplay);
         int totalSeen = 0;
         _discovery.Discovered += (_, dev) =>
             Dispatcher.Invoke(() =>
@@ -129,9 +133,18 @@ public partial class PairingWindow : Window
                     return;
                 }
 
-                // De-dup by full Bonjour name.
-                foreach (var existing in _devices)
-                    if (existing.FullName == dev.FullName) return;
+                // Dedup by DeviceKey (deviceid TXT, or IP) so an Apple TV
+                // that shows up once via _companion-link and once via
+                // _airplay is one row in the list. Prefer the
+                // companion-link entry — that's the one with the right
+                // port for pairing; the airplay entry has port 7000.
+                for (int i = 0; i < _devices.Count; i++)
+                {
+                    if (_devices[i].DeviceKey != dev.DeviceKey) continue;
+                    if (!_devices[i].IsCompanionLinkEntry && dev.IsCompanionLinkEntry)
+                        _devices[i] = dev;   // upgrade airplay → companion
+                    return;
+                }
                 _devices.Add(dev);
                 UpdateHeaderForCount();
             });
@@ -176,6 +189,18 @@ public partial class PairingWindow : Window
     private void OnDeviceSelected(object sender, SelectionChangedEventArgs e)
     {
         if (DeviceList.SelectedItem is not AppleTVDevice d) return;
+        if (!d.IsCompanionLinkEntry)
+        {
+            // AirPlay-only entry — we don't have the Companion port. Tell
+            // the user to wake the TV (which makes it advertise
+            // companion-link) and try again. Don't progress to Stage 2.
+            DeviceList.SelectedItem = null;
+            MessageBox.Show(
+                $"Found “{d.Name}” via AirPlay, but it hasn't advertised the Companion service yet.\n" +
+                "Wake the Apple TV (press a button on its remote) and click Rescan.",
+                "Apple TV Remote", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
         _picked = d;
         StopDiscovery();   // free up the multicast socket while the user types
 

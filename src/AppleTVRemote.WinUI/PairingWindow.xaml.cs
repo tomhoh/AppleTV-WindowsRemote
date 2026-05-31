@@ -74,7 +74,10 @@ public sealed partial class PairingWindow : WindowEx
         SubText   .Text = "Looking for Apple TVs on your network…";
 
         _discoveryCts = new CancellationTokenSource();
-        _discovery    = new DeviceDiscovery();
+        // Query BOTH companion-link and airplay — pyatv does this. Some
+        // Apple TVs respond faster to one than the other, and AirPlay's
+        // 'model' TXT field is another way to recognise the device.
+        _discovery    = new DeviceDiscovery(DeviceDiscovery.CompanionAndAirplay);
         var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         int totalSeen = 0;
         _discovery.Discovered += (_, dev) =>
@@ -94,8 +97,17 @@ public sealed partial class PairingWindow : WindowEx
                     return;
                 }
 
-                foreach (var existing in _devices)
-                    if (existing.FullName == dev.FullName) return;
+                // Dedup by DeviceKey so one physical Apple TV doesn't
+                // show up twice (once per service). Prefer the
+                // companion-link entry — the airplay entry uses port
+                // 7000, which is wrong for pairing.
+                for (int i = 0; i < _devices.Count; i++)
+                {
+                    if (_devices[i].DeviceKey != dev.DeviceKey) continue;
+                    if (!_devices[i].IsCompanionLinkEntry && dev.IsCompanionLinkEntry)
+                        _devices[i] = dev;
+                    return;
+                }
                 _devices.Add(dev);
                 UpdateDeviceListVisibility();
             });
@@ -137,9 +149,23 @@ public sealed partial class PairingWindow : WindowEx
 
     // ─── Stage 2: PIN entry ────────────────────────────────────────
 
-    private void OnDeviceSelected(object sender, SelectionChangedEventArgs e)
+    private async void OnDeviceSelected(object sender, SelectionChangedEventArgs e)
     {
         if (DeviceList.SelectedItem is not AppleTVDevice d) return;
+        if (!d.IsCompanionLinkEntry)
+        {
+            DeviceList.SelectedItem = null;
+            var dlg = new ContentDialog
+            {
+                Title           = "Apple TV Remote",
+                Content         = $"Found “{d.Name}” via AirPlay, but it hasn't advertised the Companion service yet.\n" +
+                                  "Wake the Apple TV (press a button on its remote) and wait a moment.",
+                CloseButtonText = "OK",
+                XamlRoot        = Content.XamlRoot,
+            };
+            await dlg.ShowAsync();
+            return;
+        }
         _picked = d;
         StopDiscovery();
         SetStage2(d);

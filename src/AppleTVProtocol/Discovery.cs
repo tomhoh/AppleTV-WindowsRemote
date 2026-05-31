@@ -51,16 +51,37 @@ public sealed record AppleTVDevice(
     public string AddressString => Address.ToString();
 
     /// <summary>
-    /// True when the device looks like an Apple TV / HomePod-class
-    /// Companion peer: it advertises an <c>rpmd</c> TXT key. iPhones
-    /// in screen-mirror mode and Macs with Sharing on also advertise
-    /// <c>_companion-link._tcp.local.</c> but don't set <c>rpmd</c>,
-    /// so this is the simplest stable filter — same shape pyatv keys
-    /// off. We DON'T require <c>rpmd</c> to match a known internal
-    /// name (K66AP, J42dAP, etc.) because new Apple TV models keep
-    /// shipping with codes our hardcoded table won't have yet.
+    /// Convenience: pyatv's airplay handler keys "is this an Apple
+    /// device?" off the <c>model</c> TXT field on
+    /// <c>_airplay._tcp.local.</c>. Values look like "AppleTV6,2",
+    /// "AppleTV11,1", "AudioAccessory1,1".
     /// </summary>
-    public bool IsAppleTV => !string.IsNullOrEmpty(Rpmd);
+    public string? AirPlayModel => TxtRecords.GetValueOrDefault("model");
+
+    /// <summary>
+    /// True when the device looks like an Apple TV / HomePod-class
+    /// peer. We accept TWO signals (mirrors pyatv, which queries both
+    /// service types):
+    ///   - <c>rpmd</c> TXT key set (from <c>_companion-link._tcp</c>) —
+    ///     Apple's internal model code (K66AP, J42dAP, J305AP …);
+    ///   - <c>model</c> TXT key starts with "AppleTV" or "AudioAccessory"
+    ///     (from <c>_airplay._tcp</c>).
+    /// Some Apple TVs only advertise the latter promptly — the
+    /// companion-link advert may be slow or sleeping. iPhones in
+    /// screen-mirror mode and Macs with Sharing on don't set either
+    /// of these.
+    /// </summary>
+    public bool IsAppleTV
+    {
+        get
+        {
+            if (!string.IsNullOrEmpty(Rpmd)) return true;
+            var m = AirPlayModel;
+            return !string.IsNullOrEmpty(m)
+                && (m.StartsWith("AppleTV",        StringComparison.OrdinalIgnoreCase)
+                 || m.StartsWith("AudioAccessory", StringComparison.OrdinalIgnoreCase));
+        }
+    }
 
     /// <summary>
     /// Pretty name for the model — looks up the internal code in our
@@ -75,6 +96,23 @@ public sealed record AppleTVDevice(
 
     /// <summary>"Apple TV 4K · 192.168.1.42:49152" — convenience for list rows.</summary>
     public string Subtitle => $"{ModelFriendly} · {AddressString}:{Port}";
+
+    /// <summary>
+    /// True if this entry came from <c>_companion-link._tcp.local.</c>
+    /// (vs <c>_airplay._tcp.local.</c>). Pairing needs a companion-link
+    /// entry because that's where the Companion-protocol port lives —
+    /// AirPlay's port (typically 7000) is the wrong one.
+    /// </summary>
+    public bool IsCompanionLinkEntry =>
+        FullName.Contains("_companion-link._tcp", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A stable identifier per physical device, regardless of which
+    /// Bonjour service the entry came from. Prefers the <c>deviceid</c>
+    /// TXT key (a MAC-format string shared by all Apple services on
+    /// the same device); falls back to the IP address.
+    /// </summary>
+    public string DeviceKey => DeviceId ?? AddressString;
 
     // ── Apple TV internal-name table (synced with pyatv's _INTERNAL_NAME_LIST) ──
     private static readonly Dictionary<string, string> AppleTVModelByInternalName = new(StringComparer.OrdinalIgnoreCase)
@@ -103,7 +141,7 @@ public sealed class DeviceDiscovery : IDisposable
 
     private readonly ServiceDiscovery _sd = new();
     private readonly ConcurrentDictionary<string, AppleTVDevice> _devices = new(StringComparer.OrdinalIgnoreCase);
-    private readonly string _service;
+    private readonly string[] _services;
     private System.Threading.Timer? _requeryTimer;
 
     /// <summary>How often to re-issue the mDNS query while running.</summary>
@@ -112,26 +150,40 @@ public sealed class DeviceDiscovery : IDisposable
     /// <summary>Raised when a new device is fully resolved (SRV + A/AAAA + TXT all present).</summary>
     public event EventHandler<AppleTVDevice>? Discovered;
 
-    /// <param name="service">A bonjour service prefix (default: <see cref="CompanionService"/>).</param>
+    /// <param name="service">
+    /// A bonjour service prefix (default: <see cref="CompanionService"/>).
+    /// Older callers that pass just one service still work; pass
+    /// <see cref="CompanionAndAirplay"/> to query both — this is what
+    /// the pair UIs do, because some Apple TVs respond to AirPlay
+    /// faster than to companion-link, and the AirPlay TXT carries a
+    /// <c>model</c> field we can recognise even when <c>rpmd</c>
+    /// hasn't arrived yet.
+    /// </param>
     public DeviceDiscovery(string service = CompanionService)
+        : this(new[] { service }) { }
+
+    public DeviceDiscovery(IEnumerable<string> services)
     {
-        _service = service.EndsWith(".local", StringComparison.OrdinalIgnoreCase)
-            ? service
-            : service + ".local";
+        _services = services.Select(s =>
+            s.EndsWith(".local", StringComparison.OrdinalIgnoreCase) ? s : s + ".local").ToArray();
+        if (_services.Length == 0) throw new ArgumentException("at least one service required", nameof(services));
         _sd.ServiceInstanceDiscovered += OnServiceInstanceDiscovered;
     }
 
+    /// <summary>Companion + AirPlay — the two services pyatv queries for Apple TV scans.</summary>
+    public static readonly string[] CompanionAndAirplay =
+        { CompanionService, AirPlayService };
+
     /// <summary>
-    /// Send an active query for the configured service and start a periodic
-    /// re-query timer (<see cref="RequeryInterval"/>). The first query
-    /// fires immediately; subsequent ones fire on the interval until
-    /// <see cref="Dispose"/>. Slow / sleeping devices often miss the first
-    /// shout — repeating gives them a chance to answer.
+    /// Send an active query for every configured service and start a
+    /// periodic re-query timer (<see cref="RequeryInterval"/>). Slow
+    /// / sleeping devices often miss the first shout — repeating
+    /// gives them a chance to answer, and querying multiple services
+    /// in parallel sometimes wakes a TV that was ignoring just one.
     /// </summary>
     public void Start()
     {
         Requery();
-        // Drop any prior timer (calling Start() twice shouldn't double-fire).
         _requeryTimer?.Dispose();
         _requeryTimer = new System.Threading.Timer(
             _ => Requery(),
@@ -142,8 +194,11 @@ public sealed class DeviceDiscovery : IDisposable
 
     private void Requery()
     {
-        try { _sd.QueryServiceInstances(_service); }
-        catch { /* ignore transient socket errors; the next tick retries */ }
+        foreach (var s in _services)
+        {
+            try { _sd.QueryServiceInstances(s); }
+            catch { /* ignore transient socket errors; the next tick retries */ }
+        }
     }
 
     /// <summary>
