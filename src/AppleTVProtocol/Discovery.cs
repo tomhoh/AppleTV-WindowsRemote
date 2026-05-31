@@ -51,13 +51,16 @@ public sealed record AppleTVDevice(
     public string AddressString => Address.ToString();
 
     /// <summary>
-    /// True only when the <c>rpmd</c> TXT key maps to a known Apple TV
-    /// internal model name (codes from pyatv's _INTERNAL_NAME_LIST plus
-    /// a few common newer ones). iPhones, Macs, HomePods, etc. that
-    /// also advertise <c>_companion-link._tcp.local.</c> do not have
-    /// these codes and are filtered out.
+    /// True when the device looks like an Apple TV / HomePod-class
+    /// Companion peer: it advertises an <c>rpmd</c> TXT key. iPhones
+    /// in screen-mirror mode and Macs with Sharing on also advertise
+    /// <c>_companion-link._tcp.local.</c> but don't set <c>rpmd</c>,
+    /// so this is the simplest stable filter — same shape pyatv keys
+    /// off. We DON'T require <c>rpmd</c> to match a known internal
+    /// name (K66AP, J42dAP, etc.) because new Apple TV models keep
+    /// shipping with codes our hardcoded table won't have yet.
     /// </summary>
-    public bool IsAppleTV => Rpmd is { Length: > 0 } code && AppleTVInternalModelNames.Contains(code);
+    public bool IsAppleTV => !string.IsNullOrEmpty(Rpmd);
 
     /// <summary>
     /// Pretty name for the model — looks up the internal code in our

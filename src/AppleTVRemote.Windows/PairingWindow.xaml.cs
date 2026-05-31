@@ -111,16 +111,23 @@ public partial class PairingWindow : Window
 
         _discoveryCts = new CancellationTokenSource();
         _discovery = new DeviceDiscovery();
+        int totalSeen = 0;
         _discovery.Discovered += (_, dev) =>
             Dispatcher.Invoke(() =>
             {
-                // Strict filter: only show actual Apple TVs (rpmd TXT
-                // key set to a known Apple TV internal model code).
-                // Everything else that advertises _companion-link._tcp —
-                // iPhones in screen-mirror mode, Macs, HomePods — is
-                // hidden. Matches the macOS sibling's behaviour, which
-                // delegates this to pyatv's own filter.
-                if (!dev.IsAppleTV) return;
+                System.Threading.Interlocked.Increment(ref totalSeen);
+
+                // Filter: only Apple TVs / HomePods (they set the
+                // 'rpmd' TXT field; iPhones in screen-mirror mode and
+                // Macs with Sharing on don't). Diagnostic counter in
+                // the sub-text so the user can tell the scan is alive
+                // even when nothing makes it through.
+                if (!dev.IsAppleTV)
+                {
+                    if (_devices.Count == 0)
+                        SubText.Text = $"Scanning… ({totalSeen} non-Apple-TV device{(totalSeen == 1 ? "" : "s")} seen so far)";
+                    return;
+                }
 
                 // De-dup by full Bonjour name.
                 foreach (var existing in _devices)

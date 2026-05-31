@@ -76,13 +76,23 @@ public sealed partial class PairingWindow : WindowEx
         _discoveryCts = new CancellationTokenSource();
         _discovery    = new DeviceDiscovery();
         var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+        int totalSeen = 0;
         _discovery.Discovered += (_, dev) =>
             dispatcher?.TryEnqueue(() =>
             {
-                // Strict filter: only Apple TVs (rpmd TXT key set to a
-                // known internal model code). Hides the iPhone / Mac /
-                // HomePod chatter that also advertises _companion-link.
-                if (!dev.IsAppleTV) return;
+                System.Threading.Interlocked.Increment(ref totalSeen);
+
+                // Filter: only Apple TVs / HomePods (they set the
+                // 'rpmd' TXT field; iPhones in screen-mirror mode and
+                // Macs with Sharing on don't). Diagnostic counter in
+                // the subtitle so users can tell the scan is working
+                // even when nothing's getting past the filter.
+                if (!dev.IsAppleTV)
+                {
+                    if (_devices.Count == 0)
+                        SubText.Text = $"Scanning… ({totalSeen} non-Apple-TV device{(totalSeen == 1 ? "" : "s")} seen so far)";
+                    return;
+                }
 
                 foreach (var existing in _devices)
                     if (existing.FullName == dev.FullName) return;
