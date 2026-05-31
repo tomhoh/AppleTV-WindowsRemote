@@ -1,0 +1,42 @@
+# .NET build output
+bin/
+obj/
+out/
+publish/
+
+# .NET user files
+*.user
+*.suo
+*.userprefs
+*.userosscache
+*.sln.docstates
+
+# Rider / Visual Studio
+.idea/
+.vs/
+.vscode/launch.json
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+
+# Test results
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# Self-contained publish output
+*.pdb
+*.exe
+
+# Misc
+.DS_Store
+Thumbs.db
+
+# Dolt / Beads (carried over from sibling project conventions)
+.dolt/
+.beads/
+.beads-credential-key
+.claude/

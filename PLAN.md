@@ -1,0 +1,149 @@
+# Port plan
+
+This is the staged roadmap for porting the Apple TV protocol layer
+from Python (**pyatv**) to C#/.NET and building a WPF tray-app UI on
+top. Each phase is a meaningful checkpoint with a verifiable
+deliverable.
+
+Source of truth:
+[**postlund/pyatv**](https://github.com/postlund/pyatv) (Python).
+Secondary reference:
+[**tomhoh/AppleTV-MenubarRemote**](https://github.com/tomhoh/AppleTV-MenubarRemote)
+(Swift port we already maintain).
+
+---
+
+## Phase 0 — Scaffolding *(done)*
+
+- `dotnet new sln` with three projects under `src/`.
+- README, PLAN, LICENSE, .gitignore.
+- Repo initialised; first commit.
+
+## Phase 1 — Primitives (1–2 weeks)
+
+Pure-data, no-IO building blocks. Port and unit-test each in isolation
+against pyatv-generated fixtures.
+
+- **TLV8** — Apple's HomeKit-style type-length-value encoding. Single
+  file (~150 lines of Python in pyatv).
+- **OPACK** — Apple's binary serialisation format used by the
+  Companion protocol. Modest file (~500 lines).
+- **BigInteger glue** — .NET has `System.Numerics.BigInteger` built
+  in, so no third-party BigInt dep needed (unlike the Swift port).
+- **CryptoUtils** — wrappers over .NET's `System.Security.Cryptography`
+  for: ChaCha20-Poly1305, Curve25519 (X25519), Ed25519, SRP-6a, HKDF.
+  .NET 9+ has Curve25519/Ed25519 natively; earlier versions need
+  Bouncy Castle. **Decide: pin .NET version based on this.**
+
+**Deliverable:** unit tests passing — every primitive matches pyatv's
+output for the same input.
+
+## Phase 2 — Discovery + pairing (1–2 weeks)
+
+- **mDNS/Bonjour discovery** — find Apple TVs on the LAN.
+  - .NET: use `Makaretu.Dns` or `Tmds.MDns` (active libraries) for
+    the `_companion-link._tcp.local.` browse.
+  - First-class .NET doesn't ship mDNS; one of these libraries is
+    required.
+- **HAP pair-setup** — the SRP-6a-based first-time pairing flow that
+  exchanges a PIN and produces long-term credentials (Ed25519 keypair
+  + Apple TV public key).
+- **HAP pair-verify** — the Curve25519-based session-key exchange done
+  on every reconnect using the stored credentials.
+
+**Deliverable:** CLI command `atv pair <name>` works end-to-end:
+discovers the device, runs pair-setup, prompts for the PIN displayed
+on the Apple TV, stores credentials in `%APPDATA%\AppleTV-WindowsRemote\`.
+
+## Phase 3 — Companion session + basic commands (1 week)
+
+- **EncryptedFrameTransport** — the post-pair-verify framed encrypted
+  transport. Every Companion frame after pair-verify goes through
+  ChaCha20-Poly1305 with the session keys.
+- **CompanionSession** — wraps the transport, handles the
+  `_systemInfo`/`_touchStart`/`_sessionStart` handshake, hosts a
+  callback-style API.
+- **HID commands** — `Up/Down/Left/Right/Select/Menu/Home/PlayPause/
+  VolumeUp/VolumeDown/Wake/Sleep`. Each is one short OPACK message
+  with a HID keycode and a "state" (down/up).
+
+**Deliverable:** `atv key home`, `atv key up`, etc. work — the TV
+responds.
+
+## Phase 4 — Swipe + long-press + click-and-swipe (3–4 days)
+
+Touch-event encoding for the touchpad-style gestures. Same OPACK
+encoder, just touch-event messages instead of HID commands.
+
+- `sendSwipe(direction)` — touch begin → interpolated moves → end.
+- `sendLongPress(command, ms)` — HID down, wait, HID up.
+- `sendClickAndSwipe(direction)` — HID select-down, swipe sequence,
+  HID select-up.
+
+**Deliverable:** `atv swipe up`, `atv longpress home 1500`, etc.
+work.
+
+## Phase 5 — App launcher + text input (1 week)
+
+- `fetchApps()` — Companion's `FetchLaunchableApplicationsEvent`
+  returns `[(bundleID, name)]`.
+- `launchApp(bundleID)` — sends `_launchApp` message.
+- `sendText(text)` / `sendBackspace()` / `sendClearText()` — RTI
+  (Remote Text Input) message family. Requires special pairing
+  follow-up the first time a text field opens on the TV.
+
+**Deliverable:** `atv apps`, `atv launch <bundleID>`, `atv text "hello"`
+all work.
+
+## Phase 6 — Now Playing (3 days)
+
+- AirPlay tunnel subscription that delivers now-playing metadata
+  pushes from the TV. (`AirPlayEventChannel` in pyatv.)
+- `NowPlayingInfo` model: title, artist, album, app, elapsed time,
+  duration, playback rate.
+- Live elapsed-time extrapolation between pushes.
+
+**Deliverable:** `atv now` shows what's playing; data is also
+observable from the WPF UI.
+
+## Phase 7 — WPF tray app (2 weeks)
+
+- `NotifyIcon` (WPF `Hardcodet.NotifyIcon.Wpf` NuGet — well-maintained
+  WPF wrapper for the Win32 shell notify icon).
+- Popup window that drops down from the tray icon position. Matches
+  the Siri-Remote-style aesthetic of `AppleTV-MenubarRemote`
+  (aluminum gradient, rounded clickpad, button rows, light/dark).
+- Pairing flow UI (PIN entry on first run).
+- Right-click context menu with discovered devices, paired/connected
+  markers, click-to-switch.
+- Now Playing banner at the top of the popup when something's playing.
+- App launcher panel (slide-out from left of popup).
+- Standalone text-input window when the TV opens a text field.
+
+**Deliverable:** double-clickable `.exe` that runs as a tray app.
+
+## Phase 8 — Distribution (1 week)
+
+- Self-contained single-file publish via
+  `dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true`.
+- Code-sign (or instruct users to bypass SmartScreen — same dance as
+  Gatekeeper on macOS).
+- MSI installer via WiX or just a zip with the `.exe`.
+- GitHub Release with attached binary.
+
+---
+
+## Out of scope (initially)
+
+- **Multi-device airplay grouping.** pyatv supports this; not
+  needed for a tray-app remote.
+- **RAOP** (Remote Audio Output Protocol) audio streaming. Not
+  needed for a tray-app remote.
+- **DACP** legacy protocol for iTunes-era Apple TVs. Companion + MRP
+  cover everything from Apple TV HD onwards.
+
+## Estimated total
+
+~9–12 weeks of focused part-time work to ship Phase 8. The protocol
+phases (1–6) are most of the time; the WPF UI in Phase 7 should be
+mechanical once the protocol layer is solid.
