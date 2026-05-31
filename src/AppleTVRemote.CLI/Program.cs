@@ -28,6 +28,8 @@ static async Task<int> CliMain(string[] args)
             return ListCommand();
         case "unpair":
             return UnpairCommand(args[1..]);
+        case "key":
+            return await KeyCommand(args[1..]);
         default:
             Console.Error.WriteLine($"unknown command: {args[0]}");
             PrintUsage();
@@ -43,6 +45,7 @@ static void PrintUsage()
           atv pair <host> <port> [--name <display-name>]
           atv list
           atv unpair <device-id>
+          atv key <device-id> <host> <port> <button> [--hold-ms N]
 
         Commands:
           discover    Browse the LAN for Apple TVs via mDNS and print what we find.
@@ -50,6 +53,9 @@ static void PrintUsage()
                       shown on the TV; on success, writes credentials to %APPDATA%.
           list        List paired devices.
           unpair      Forget credentials for a paired device.
+          key         Connect to a paired device, run pair-verify, and press one button.
+                      Buttons: up, down, left, right, select, menu, home, playpause,
+                               volumeup, volumedown, wake, sleep, pageup, pagedown, guide
         """);
 }
 
@@ -209,4 +215,61 @@ static int UnpairCommand(string[] args)
     store.Delete(args[0]);
     Console.WriteLine($"Removed credentials for {args[0]}");
     return 0;
+}
+
+static async Task<int> KeyCommand(string[] args)
+{
+    if (args.Length < 4)
+    {
+        Console.Error.WriteLine("usage: atv key <device-id> <host> <port> <button> [--hold-ms N]");
+        return 2;
+    }
+    var deviceId = args[0];
+    var host = args[1];
+    if (!int.TryParse(args[2], out int port) || port <= 0 || port > 65535)
+    {
+        Console.Error.WriteLine($"invalid port: {args[2]}");
+        return 2;
+    }
+    if (!Enum.TryParse<HidCommand>(args[3], ignoreCase: true, out var hidCmd))
+    {
+        Console.Error.WriteLine($"unknown button: {args[3]}");
+        return 2;
+    }
+
+    int holdMs = 0;
+    for (int i = 4; i < args.Length; i++)
+    {
+        if (args[i] == "--hold-ms" && i + 1 < args.Length && int.TryParse(args[++i], out var hm))
+            holdMs = hm;
+    }
+
+    var store = new CredentialStore();
+    var stored = store.Load(deviceId);
+    if (stored is null)
+    {
+        Console.Error.WriteLine($"no credentials for {deviceId} — run 'atv pair' first");
+        return 1;
+    }
+
+    await using var conn = new CompanionConnection(host, port);
+    try { await conn.ConnectAsync(); }
+    catch (Exception ex) { Console.Error.WriteLine($"connect failed: {ex.Message}"); return 3; }
+
+    var verify = new CompanionPairVerify(conn);
+    try { await verify.RunAsync(stored.Credentials); }
+    catch (HapPairingException ex) { Console.Error.WriteLine($"pair-verify failed: {ex.Message}"); return 4; }
+
+    await using var session = new CompanionSession(conn);
+    try
+    {
+        await session.PressAsync(hidCmd, hold: holdMs > 0 ? TimeSpan.FromMilliseconds(holdMs) : null);
+        Console.WriteLine($"Sent {hidCmd}{(holdMs > 0 ? $" (held {holdMs}ms)" : "")}");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"key send failed: {ex.Message}");
+        return 5;
+    }
 }
