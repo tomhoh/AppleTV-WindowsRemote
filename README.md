@@ -5,10 +5,12 @@ no Python, no Electron, no Node. A port of the Apple TV Companion /
 MRP protocols (Apple's reverse-engineered remote-control protocols)
 to .NET, fronted by a WPF system-tray UI.
 
-> **Status: scaffolding only.** No protocol code is implemented yet.
-> This repo currently contains only the .NET solution layout, the
-> porting plan ([PLAN.md](PLAN.md)), and notes. See the plan for the
-> roadmap and source-of-truth references.
+> **Status: Phase 1 protocol primitives landed.** TLV8, OPACK, and the
+> HAP crypto primitives (HKDF-SHA512, ChaCha20-Poly1305 with HAP's
+> 8-byte-nonce convention, SRP-6a client with the 3072-bit HAP group)
+> are implemented and tested byte-exact against the pyatv/srptools
+> reference (87 tests passing). No mDNS / pair-verify / Companion
+> session / WPF UI yet — see [PLAN.md](PLAN.md) for the full roadmap.
 
 ## Why this exists
 
@@ -75,6 +77,28 @@ dotnet build
 
 The library and CLI build on any platform with .NET 10. The WPF
 project only builds on Windows (Microsoft.WindowsDesktop.App).
+
+## Releases
+
+CI is in [`.github/workflows`](.github/workflows):
+
+| Workflow | Trigger | Output |
+|---|---|---|
+| `ci.yml`      | every push / PR to `main`                      | builds the library + CLI on Ubuntu **and** Windows, builds the WPF app on Windows, runs all xUnit tests |
+| `release.yml` | push of a tag matching `v*.*.*` (or manual run) | publishes per-tag artifacts: self-contained single-file WPF `.exe` (zip), self-contained CLI (zip), and an MSIX package + publisher `.cer` |
+
+To cut a release:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+…and the workflow attaches all three assets to a new GitHub Release.
+
+> The MSIX is currently signed with a **dev self-signed cert generated
+> in CI**, so end-users must trust the included `.cer` before sideloading.
+> Real code-signing will be wired in once there's a cert to bind.
 
 ## License
 
