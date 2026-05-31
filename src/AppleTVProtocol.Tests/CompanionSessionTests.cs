@@ -207,4 +207,170 @@ public class CompanionSessionTests
         var unencrypted = new CompanionConnection("127.0.0.1", 49152);
         Assert.Throws<InvalidOperationException>(() => new CompanionSession(unencrypted));
     }
+
+    // ─── Touch / swipe ───
+
+    [Fact]
+    public async Task SendTouchAsync_EmitsHidTEventWithCoordinatesAndAction()
+    {
+        var captured = new TaskCompletionSource<IDictionary<string, object?>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var fake = new FakeEncryptedAppleTV();
+        fake.Start(req => { captured.TrySetResult(req); return null; });   // no response — events are fire-and-forget
+
+        await using var conn = new CompanionConnection("127.0.0.1", fake.Port);
+        await conn.ConnectAsync();
+        conn.EnableEncryption(fake.ServerInKey, fake.ServerOutKey);
+        await using var session = new CompanionSession(conn);
+
+        await session.SendTouchAsync(123, 456, TouchAction.Hold);
+        var req = await captured.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal("_hidT", req["_i"]);
+        Assert.Equal((int)CompanionMessageType.Event, CompanionSession.UnboxInt(req["_t"]));
+        var c = CompanionSession.ConvertToStringKeyed(req["_c"]);
+        Assert.NotNull(c);
+        Assert.Equal(123, CompanionSession.UnboxInt(c!["_cx"]));
+        Assert.Equal(456, CompanionSession.UnboxInt(c["_cy"]));
+        Assert.Equal((int)TouchAction.Hold, CompanionSession.UnboxInt(c["_tPh"]));
+        Assert.Equal(1, CompanionSession.UnboxInt(c["_tFg"]));
+    }
+
+    [Fact]
+    public async Task SendTouchAsync_ClampsOutOfRangeCoordinates()
+    {
+        var captured = new TaskCompletionSource<IDictionary<string, object?>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var fake = new FakeEncryptedAppleTV();
+        fake.Start(req => { captured.TrySetResult(req); return null; });
+        await using var conn = new CompanionConnection("127.0.0.1", fake.Port);
+        await conn.ConnectAsync();
+        conn.EnableEncryption(fake.ServerInKey, fake.ServerOutKey);
+        await using var session = new CompanionSession(conn);
+
+        await session.SendTouchAsync(-50, 99999, TouchAction.Press);
+
+        var req = await captured.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var c = CompanionSession.ConvertToStringKeyed(req["_c"])!;
+        Assert.Equal(0,    CompanionSession.UnboxInt(c["_cx"]));   // clamped from -50
+        Assert.Equal(CompanionSession.TouchpadHeight,
+                     CompanionSession.UnboxInt(c["_cy"]));         // clamped from 99999
+    }
+
+    [Fact]
+    public async Task SwipeAsync_EmitsPressInterpolatedHoldsAndRelease()
+    {
+        var events = new List<int>();   // capture _tPh in order
+        var doneEvent = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var fake = new FakeEncryptedAppleTV();
+        fake.Start(req =>
+        {
+            var c = CompanionSession.ConvertToStringKeyed(req["_c"]);
+            if (c is null) return null;
+            int? phase = CompanionSession.UnboxInt(c["_tPh"]);
+            if (phase is null) return null;
+            lock (events)
+            {
+                events.Add(phase.Value);
+                if (phase.Value == (int)TouchAction.Release) doneEvent.TrySetResult(true);
+            }
+            return null;
+        });
+        await using var conn = new CompanionConnection("127.0.0.1", fake.Port);
+        await conn.ConnectAsync();
+        conn.EnableEncryption(fake.ServerInKey, fake.ServerOutKey);
+        await using var session = new CompanionSession(conn);
+
+        // 100 ms duration → ~6 hold interpolation ticks
+        await session.SwipeAsync(0, 0, 1000, 1000, TimeSpan.FromMilliseconds(100));
+        await doneEvent.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal((int)TouchAction.Press,   events.First());
+        Assert.Equal((int)TouchAction.Release, events.Last());
+        // At least one Hold between Press and Release
+        Assert.Contains((int)TouchAction.Hold, events.Skip(1).Take(events.Count - 2));
+    }
+
+    [Fact]
+    public async Task SwipeAsync_RejectsZeroDuration()
+    {
+        await using var fake = new FakeEncryptedAppleTV();
+        fake.Start(_ => null);
+        await using var conn = new CompanionConnection("127.0.0.1", fake.Port);
+        await conn.ConnectAsync();
+        conn.EnableEncryption(fake.ServerInKey, fake.ServerOutKey);
+        await using var session = new CompanionSession(conn);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => session.SwipeAsync(0, 0, 1000, 1000, TimeSpan.Zero));
+    }
+
+    // ─── App launcher ───
+
+    [Fact]
+    public async Task ListAppsAsync_ReturnsBundleIdToNameMap()
+    {
+        await using var fake = new FakeEncryptedAppleTV();
+        fake.Start(req =>
+        {
+            if ((string)req["_i"]! != "FetchLaunchableApplicationsEvent") return null;
+            // Build the nested response shape pyatv expects
+            var apps = new Dictionary<string, object?>
+            {
+                { "com.netflix.Netflix", "Netflix" },
+                { "com.apple.TVMovies",  "Movies" },
+            };
+            return new Dictionary<string, object?>
+            {
+                { "_i", req["_i"] },
+                { "_t", (int)CompanionMessageType.Response },
+                { "_x", req["_x"] },
+                { "_c", new Dictionary<string, object?>
+                    { { "FetchLaunchableApplicationsEventResponseDictionary", apps } } },
+            };
+        });
+        await using var conn = new CompanionConnection("127.0.0.1", fake.Port);
+        await conn.ConnectAsync();
+        conn.EnableEncryption(fake.ServerInKey, fake.ServerOutKey);
+        await using var session = new CompanionSession(conn);
+
+        var apps = await session.ListAppsAsync();
+
+        Assert.Equal(2, apps.Count);
+        Assert.Equal("Netflix", apps["com.netflix.Netflix"]);
+        Assert.Equal("Movies",  apps["com.apple.TVMovies"]);
+    }
+
+    [Fact]
+    public async Task LaunchAppAsync_SendsLaunchRequestWithBundleId()
+    {
+        var captured = new TaskCompletionSource<IDictionary<string, object?>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var fake = new FakeEncryptedAppleTV();
+        fake.Start(req =>
+        {
+            captured.TrySetResult(req);
+            return AckResponse(req);
+        });
+        await using var conn = new CompanionConnection("127.0.0.1", fake.Port);
+        await conn.ConnectAsync();
+        conn.EnableEncryption(fake.ServerInKey, fake.ServerOutKey);
+        await using var session = new CompanionSession(conn);
+
+        await session.LaunchAppAsync("com.apple.TVMusic");
+
+        var req = await captured.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal("_launchApp", req["_i"]);
+        var c = CompanionSession.ConvertToStringKeyed(req["_c"])!;
+        Assert.Equal("com.apple.TVMusic", c["_bundleID"]);
+    }
+
+    [Fact]
+    public async Task LaunchAppAsync_RejectsEmptyBundleId()
+    {
+        await using var fake = new FakeEncryptedAppleTV();
+        fake.Start(_ => null);
+        await using var conn = new CompanionConnection("127.0.0.1", fake.Port);
+        await conn.ConnectAsync();
+        conn.EnableEncryption(fake.ServerInKey, fake.ServerOutKey);
+        await using var session = new CompanionSession(conn);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => session.LaunchAppAsync(""));
+    }
 }

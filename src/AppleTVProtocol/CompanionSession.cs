@@ -53,6 +53,20 @@ public enum CompanionMessageType
 }
 
 /// <summary>
+/// Touchpad action phases — what the touchpad is being told happened
+/// to the finger. <c>Press</c> begins a stroke, <c>Hold</c> continues
+/// it, <c>Release</c> ends it; <c>Click</c> is the
+/// click-the-touchpad-as-a-button variant.
+/// </summary>
+public enum TouchAction
+{
+    Press   = 1,
+    Hold    = 3,
+    Release = 4,
+    Click   = 5,
+}
+
+/// <summary>
 /// Wraps a pair-verified <see cref="CompanionConnection"/> and exposes
 /// request/response and fire-and-forget HID commands.
 /// </summary>
@@ -156,6 +170,107 @@ public sealed class CompanionSession : IAsyncDisposable
         if (hold is { TotalMilliseconds: > 0 } h)
             await Task.Delay(h, cancel).ConfigureAwait(false);
         await SendHidAsync(command, down: false, cancel: cancel).ConfigureAwait(false);
+    }
+
+    // ─── Touchpad / swipe ───
+
+    /// <summary>Logical touchpad dimensions used by Apple's Siri Remote model. Coordinates 0..1000.</summary>
+    public const int TouchpadWidth  = 1000;
+    public const int TouchpadHeight = 1000;
+    private static readonly TimeSpan TouchInterpolationDelay = TimeSpan.FromMilliseconds(16);
+
+    private readonly long _baseTimestampNanos = DateTime.UtcNow.Ticks * 100;
+
+    /// <summary>
+    /// Send a single touch event (fire-and-forget — pyatv uses
+    /// MessageType.Event for touch).
+    /// </summary>
+    public Task SendTouchAsync(int x, int y, TouchAction action, CancellationToken cancel = default)
+    {
+        x = Math.Clamp(x, 0, TouchpadWidth);
+        y = Math.Clamp(y, 0, TouchpadHeight);
+        long nanosSinceBase = (DateTime.UtcNow.Ticks * 100) - _baseTimestampNanos;
+        var content = new Dictionary<string, object?>
+        {
+            { "_ns",  nanosSinceBase },
+            { "_tFg", 1 },               // touch finger count = 1
+            { "_cx",  x },
+            { "_tPh", (int)action },
+            { "_cy",  y },
+        };
+        return SendEventAsync("_hidT", content, cancel);
+    }
+
+    /// <summary>
+    /// Animate a swipe from (startX, startY) to (endX, endY) over
+    /// <paramref name="duration"/>. Interpolates positions every ~16 ms
+    /// (matching pyatv's TOUCHPAD_DELAY_MS). Sends Press at start,
+    /// Hold for each interpolated point, Release at end.
+    /// </summary>
+    public async Task SwipeAsync(
+        int startX, int startY, int endX, int endY,
+        TimeSpan duration, CancellationToken cancel = default)
+    {
+        if (duration <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(duration), "must be positive");
+
+        await SendTouchAsync(startX, startY, TouchAction.Press, cancel).ConfigureAwait(false);
+
+        var endAt = DateTime.UtcNow + duration;
+        double x = startX, y = startY;
+        while (DateTime.UtcNow < endAt)
+        {
+            var remaining = endAt - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero) break;
+            // Linear interpolation toward (endX, endY).
+            double fraction = TouchInterpolationDelay.TotalMilliseconds / Math.Max(1, remaining.TotalMilliseconds);
+            x += (endX - x) * fraction;
+            y += (endY - y) * fraction;
+            await SendTouchAsync((int)x, (int)y, TouchAction.Hold, cancel).ConfigureAwait(false);
+            try { await Task.Delay(TouchInterpolationDelay, cancel).ConfigureAwait(false); }
+            catch (TaskCanceledException) { break; }
+        }
+
+        await SendTouchAsync(endX, endY, TouchAction.Release, cancel).ConfigureAwait(false);
+    }
+
+    // ─── App launcher ───
+
+    /// <summary>
+    /// Fetch the list of launchable apps from the Apple TV. Returns a
+    /// dict keyed by bundle identifier; the value is the app's display
+    /// name. The exact shape pyatv expects: response[_c]["FetchLaunchableApplicationsEventResponseDictionary"]
+    /// is a dict {bundleId → displayName}.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, string>> ListAppsAsync(CancellationToken cancel = default)
+    {
+        var resp = await SendRequestAsync("FetchLaunchableApplicationsEvent",
+            new Dictionary<string, object?>(), cancel: cancel).ConfigureAwait(false);
+
+        // Walk down resp["_c"]["FetchLaunchableApplicationsEventResponseDictionary"]
+        if (!resp.TryGetValue("_c", out var contentBoxed)) return new Dictionary<string, string>();
+        var content = ConvertToStringKeyed(contentBoxed);
+        if (content is null) return new Dictionary<string, string>();
+        if (!content.TryGetValue("FetchLaunchableApplicationsEventResponseDictionary", out var appsBoxed))
+            return new Dictionary<string, string>();
+        var apps = ConvertToStringKeyed(appsBoxed);
+        if (apps is null) return new Dictionary<string, string>();
+
+        var result = new Dictionary<string, string>(apps.Count);
+        foreach (var kv in apps)
+            result[kv.Key] = kv.Value?.ToString() ?? string.Empty;
+        return result;
+    }
+
+    /// <summary>
+    /// Launch an app by bundle identifier (e.g. <c>com.netflix.Netflix</c>).
+    /// </summary>
+    public Task LaunchAppAsync(string bundleId, CancellationToken cancel = default)
+    {
+        if (string.IsNullOrWhiteSpace(bundleId))
+            throw new ArgumentException("bundleId required", nameof(bundleId));
+        var content = new Dictionary<string, object?> { { "_bundleID", bundleId } };
+        return SendRequestAsync("_launchApp", content, cancel: cancel);
     }
 
     public ValueTask DisposeAsync()
