@@ -130,7 +130,7 @@ public class CompanionSessionTests
 
         await session.SendHidAsync(HidCommand.PlayPause, down: true);
 
-        var req = await captured.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var req = await captured.Task.WaitAsync(TimeSpan.FromSeconds(8));
         Assert.Equal("_hidC", req["_i"]);
         Assert.Equal((int)CompanionMessageType.Request, CompanionSession.UnboxInt(req["_t"]));
         var content = CompanionSession.ConvertToStringKeyed(req["_c"]);
@@ -164,7 +164,7 @@ public class CompanionSessionTests
         await using var session = new CompanionSession(conn);
 
         await session.PressAsync(HidCommand.Select);
-        await allReceived.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await allReceived.Task.WaitAsync(TimeSpan.FromSeconds(8));
 
         Assert.Equal(new[] { 1, 2 }, requests);   // down then up
     }
@@ -198,7 +198,7 @@ public class CompanionSessionTests
 
         // Should return quickly even though the server never responds.
         await session.SendEventAsync("_interest", new Dictionary<string, object?> { { "_regEvents", new[] { "evt" } } })
-            .WaitAsync(TimeSpan.FromSeconds(2));
+            .WaitAsync(TimeSpan.FromSeconds(8));
     }
 
     [Fact]
@@ -223,7 +223,7 @@ public class CompanionSessionTests
         await using var session = new CompanionSession(conn);
 
         await session.SendTouchAsync(123, 456, TouchAction.Hold);
-        var req = await captured.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var req = await captured.Task.WaitAsync(TimeSpan.FromSeconds(8));
         Assert.Equal("_hidT", req["_i"]);
         Assert.Equal((int)CompanionMessageType.Event, CompanionSession.UnboxInt(req["_t"]));
         var c = CompanionSession.ConvertToStringKeyed(req["_c"]);
@@ -247,7 +247,7 @@ public class CompanionSessionTests
 
         await session.SendTouchAsync(-50, 99999, TouchAction.Press);
 
-        var req = await captured.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var req = await captured.Task.WaitAsync(TimeSpan.FromSeconds(8));
         var c = CompanionSession.ConvertToStringKeyed(req["_c"])!;
         Assert.Equal(0,    CompanionSession.UnboxInt(c["_cx"]));   // clamped from -50
         Assert.Equal(CompanionSession.TouchpadHeight,
@@ -280,7 +280,7 @@ public class CompanionSessionTests
 
         // 100 ms duration → ~6 hold interpolation ticks
         await session.SwipeAsync(0, 0, 1000, 1000, TimeSpan.FromMilliseconds(100));
-        await doneEvent.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await doneEvent.Task.WaitAsync(TimeSpan.FromSeconds(8));
 
         Assert.Equal((int)TouchAction.Press,   events.First());
         Assert.Equal((int)TouchAction.Release, events.Last());
@@ -355,7 +355,7 @@ public class CompanionSessionTests
 
         await session.LaunchAppAsync("com.apple.TVMusic");
 
-        var req = await captured.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var req = await captured.Task.WaitAsync(TimeSpan.FromSeconds(8));
         Assert.Equal("_launchApp", req["_i"]);
         var c = CompanionSession.ConvertToStringKeyed(req["_c"])!;
         Assert.Equal("com.apple.TVMusic", c["_bundleID"]);

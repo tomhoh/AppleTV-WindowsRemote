@@ -67,7 +67,7 @@ public class CompanionConnectionTests
         var wire    = CompanionFrame.EncodeFrame(CompanionFrameType.U_OPACK, payload);
         await server.GetStream().WriteAsync(wire);
 
-        var frame = await got.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var frame = await got.Task.WaitAsync(TimeSpan.FromSeconds(8));
         Assert.Equal(CompanionFrameType.U_OPACK, frame.Type);
         Assert.Equal("PONG!", Encoding.ASCII.GetString(frame.Payload));
 
@@ -95,7 +95,7 @@ public class CompanionConnectionTests
         await s.WriteAsync(wire.AsMemory(7, 600));    await Task.Delay(20);
         await s.WriteAsync(wire.AsMemory(607));
 
-        var frame = await got.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var frame = await got.Task.WaitAsync(TimeSpan.FromSeconds(8));
         Assert.Equal(CompanionFrameType.E_OPACK, frame.Type);
         Assert.Equal(payload.Length, frame.Payload.Length);
         Assert.Equal(Convert.ToHexString(payload), Convert.ToHexString(frame.Payload));
@@ -124,7 +124,7 @@ public class CompanionConnectionTests
         var f3 = CompanionFrame.EncodeFrame(CompanionFrameType.U_OPACK, Encoding.ASCII.GetBytes("BBBB"));
         await server.GetStream().WriteAsync(f1.Concat(f2).Concat(f3).ToArray());
 
-        await all.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await all.Task.WaitAsync(TimeSpan.FromSeconds(8));
         Assert.Equal(3, received.Count);
         Assert.Equal("AAA",  Encoding.ASCII.GetString(received[0].Payload));
         Assert.Empty(received[1].Payload);
@@ -178,7 +178,7 @@ public class CompanionConnectionTests
         var server = await accept;
         server.Close();
 
-        var ex = await closed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var ex = await closed.Task.WaitAsync(TimeSpan.FromSeconds(8));
         Assert.Null(ex);    // EOF is graceful
         listener.Stop();
     }

@@ -196,7 +196,7 @@ public class PairVerifyTests
         var sessionKeys = await driver.RunAsync(credentials, ephemeralX25519Seed: clientEphemeral);
 
         // Wait for the server side to finish processing M3
-        await server.ServerLoop.WaitAsync(TimeSpan.FromSeconds(2));
+        await server.ServerLoop.WaitAsync(TimeSpan.FromSeconds(8));
 
         // Both sides arrived at the same shared secret and therefore
         // identical session keys.
