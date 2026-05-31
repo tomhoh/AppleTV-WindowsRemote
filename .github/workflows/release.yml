@@ -158,19 +158,25 @@ jobs:
           & '${{ steps.sdk.outputs.signtool }}' sign /fd SHA256 /a /f $pfx /p ([System.Net.NetworkCredential]::new('', $pwd).Password) $env:MSIX_FILE
 
       # ─── Upload artifacts so they're available even without a release ───
+      # All three are continue-on-error so a hit on the account-wide
+      # GitHub Actions artifact-storage quota doesn't prevent the
+      # GitHub Release upload (which is what actually matters).
       - name: Upload WPF self-contained zip
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: wpf-selfcontained
           path: ${{ env.WPF_ZIP }}
 
       - name: Upload CLI self-contained zip
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: cli-selfcontained
           path: ${{ env.CLI_ZIP }}
 
       - name: Upload MSIX
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: msix-package
