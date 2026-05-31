@@ -96,6 +96,48 @@ public sealed partial class MainWindow : WindowEx
             p.IsMinimizable = false;
             p.IsResizable   = false;
         }
+        // Bigger rounded corners than the DWM default. DWM's
+        // DWM_WINDOW_CORNER_PREFERENCE caps at ~8 px ("Round"), so to
+        // get the macOS-popover-style ~22 px radius we clip the whole
+        // HWND to a rounded rect via SetWindowRgn. This affects the
+        // Mica fill, the border, everything — exactly what we want.
+        ApplyRoundedWindowRegion(22);
+        // Re-apply on size changes so the rounded mask stays correct.
+        AppWindow.Changed += (_, args) =>
+        {
+            if (args.DidSizeChange) ApplyRoundedWindowRegion(22);
+        };
+    }
+
+    private void ApplyRoundedWindowRegion(int radius)
+    {
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            var size = AppWindow.Size;
+            // +1 on the bottom/right because SetWindowRgn's rect is
+            // half-open — without it the bottom-right pixels render
+            // slightly cropped.
+            var hrgn = NativeMethods.CreateRoundRectRgn(0, 0, size.Width + 1, size.Height + 1, radius * 2, radius * 2);
+            if (hrgn != IntPtr.Zero)
+            {
+                NativeMethods.SetWindowRgn(hwnd, hrgn, true);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"ApplyRoundedWindowRegion failed: {ex}");
+        }
+    }
+
+    private static class NativeMethods
+    {
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
+        internal static extern IntPtr CreateRoundRectRgn(int nLeftRect, int nTopRect,
+            int nRightRect, int nBottomRect, int nWidthEllipse, int nHeightEllipse);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        internal static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
     }
 
     private void RefreshDevices()
