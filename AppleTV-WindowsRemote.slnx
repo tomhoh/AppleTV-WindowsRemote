@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/AppleTVProtocol.Tests/AppleTVProtocol.Tests.csproj" />
     <Project Path="src/AppleTVProtocol/AppleTVProtocol.csproj" />
     <Project Path="src/AppleTVRemote.CLI/AppleTVRemote.CLI.csproj" />
     <Project Path="src/AppleTVRemote.Windows/AppleTVRemote.Windows.csproj" />
