@@ -184,6 +184,61 @@ public partial class PairingWindow : Window
         await StartDiscoveryAsync();
     }
 
+    private async void OnEnterIpClicked(object sender, RoutedEventArgs e)
+    {
+        // Workaround for the slow / unreliable Makaretu multicast on
+        // Windows: lets the user type the TV's IP and we probe it via
+        // direct unicast mDNS (responds in ms vs minutes via multicast).
+        var prompt = new IpPromptWindow { Owner = this };
+        if (prompt.ShowDialog() != true) return;
+        var ipText = prompt.EnteredIp;
+        if (!System.Net.IPAddress.TryParse(ipText, out var ip))
+        {
+            MessageBox.Show($"'{ipText}' isn't a valid IP address.", "Apple TV Remote",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        HeaderText.Text = $"Probing {ip}…";
+        SubText.Text    = "Sending unicast mDNS query directly to the TV.";
+        try
+        {
+            var dev = await DeviceDiscovery.UnicastProbeAsync(ip,
+                timeout: TimeSpan.FromSeconds(4));
+            if (dev is null)
+            {
+                MessageBox.Show(
+                    $"No reply from {ip}. Check the address (Apple TV → Settings → " +
+                    "Network → Wi-Fi) and that the TV is awake.",
+                    "Apple TV Remote", MessageBoxButton.OK, MessageBoxImage.Information);
+                UpdateHeaderForCount();
+                return;
+            }
+            // Got the companion port — proceed to PIN entry as if user
+            // had clicked a discovered list row.
+            _picked = dev;
+            StopDiscovery();
+            DeviceList.Visibility = Visibility.Collapsed;
+            PinPanel  .Visibility = Visibility.Visible;
+            BackBtn   .Visibility = Visibility.Visible;
+            PairBtn   .Visibility = Visibility.Visible;
+            RescanBtn .Visibility = Visibility.Collapsed;
+            ByIpBtn   .Visibility = Visibility.Collapsed;
+
+            HeaderText.Text = $"Pair with {dev.Name}";
+            SubText   .Text = $"{dev.AddressString}:{dev.Port}   ·   {dev.ModelFriendly}";
+            PinPrompt .Text = "Enter the 4-digit PIN shown on your Apple TV:";
+            PinBox.Password = string.Empty;
+            PinBox.Focus();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Probe failed: {ex.Message}", "Apple TV Remote",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            UpdateHeaderForCount();
+        }
+    }
+
     // ─── Stage 2: PIN entry ────────────────────────────────────────
 
     private void OnDeviceSelected(object sender, SelectionChangedEventArgs e)
@@ -226,6 +281,7 @@ public partial class PairingWindow : Window
         PairBtn   .Visibility = Visibility.Collapsed;
         DeviceList.Visibility = Visibility.Visible;
         RescanBtn .Visibility = Visibility.Visible;
+        ByIpBtn   .Visibility = Visibility.Visible;
         DeviceList.SelectedItem = null;
         UpdateHeaderForCount();
         PinError.Visibility = Visibility.Collapsed;

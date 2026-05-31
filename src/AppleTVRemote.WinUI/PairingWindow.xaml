@@ -147,12 +147,16 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <Button Grid.Column="0"
-                    x:Name="RescanBtn"
-                    Content="Rescan"
-                    Click="OnRescanClicked"
-                    HorizontalAlignment="Left"
-                    Padding="14,4" />
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" HorizontalAlignment="Left">
+                <Button x:Name="RescanBtn"
+                        Content="Rescan"
+                        Click="OnRescanClicked"
+                        Padding="14,4" />
+                <Button x:Name="ByIpBtn"
+                        Content="Enter IP…"
+                        Click="OnEnterIpClicked"
+                        Padding="14,4" />
+            </StackPanel>
             <Button Grid.Column="1"
                     x:Name="BackBtn"
                     Content="Back"

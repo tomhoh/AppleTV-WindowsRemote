@@ -113,7 +113,8 @@
         <!-- Footer buttons -->
         <Grid Grid.Row="2" Margin="0,12,0,0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"    />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
@@ -121,14 +122,23 @@
                     Content="Rescan"
                     Click="OnRescanClicked"
                     HorizontalAlignment="Left"
+                    Padding="12,4"
+                    Margin="0,0,8,0" />
+            <!-- Workaround for slow Windows multicast: lets the user
+                 type the TV's IP directly and pair without waiting on
+                 discovery. -->
+            <Button Grid.Column="1" x:Name="ByIpBtn"
+                    Content="Enter IP…"
+                    Click="OnEnterIpClicked"
+                    HorizontalAlignment="Left"
                     Padding="12,4" />
-            <Button Grid.Column="1" x:Name="BackBtn"
+            <Button Grid.Column="2" x:Name="BackBtn"
                     Content="Back"
                     Click="OnBackClicked"
                     Visibility="Collapsed"
                     Margin="0,0,8,0"
                     Padding="12,4" />
-            <Button Grid.Column="2" x:Name="PairBtn"
+            <Button Grid.Column="3" x:Name="PairBtn"
                     Content="Pair"
                     Click="OnPairClicked"
                     Visibility="Collapsed"

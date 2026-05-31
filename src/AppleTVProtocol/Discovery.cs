@@ -206,6 +206,72 @@ public sealed class DeviceDiscovery : IDisposable
         { CompanionService, AirPlayService };
 
     /// <summary>
+    /// Direct unicast mDNS probe to a known Apple TV IP. Sends a DNS
+    /// PTR query for <c>_companion-link._tcp.local.</c> straight to
+    /// <paramref name="ip"/>:5353 — bypasses multicast entirely, so it
+    /// works even when Windows / VPN / firewall configurations are
+    /// dropping multicast packets (which is why our normal discovery
+    /// can take minutes to find a TV the macOS sibling sees in seconds).
+    ///
+    /// Returns the resolved companion-link port + the bundled TXT
+    /// records, or <c>null</c> if the TV didn't reply within
+    /// <paramref name="timeout"/>. Apple TVs reply to unicast mDNS
+    /// queries immediately (it's part of the standard), so this is
+    /// usually a sub-100-ms round trip.
+    /// </summary>
+    public static async Task<AppleTVDevice?> UnicastProbeAsync(
+        IPAddress ip, TimeSpan? timeout = null, CancellationToken ct = default)
+    {
+        timeout ??= TimeSpan.FromSeconds(3);
+        using var udp = new System.Net.Sockets.UdpClient();
+        udp.Client.SetSocketOption(System.Net.Sockets.SocketOptionLevel.Socket,
+            System.Net.Sockets.SocketOptionName.ReuseAddress, true);
+        udp.Client.Bind(new IPEndPoint(IPAddress.Any, 0));
+
+        // Build a DNS query: 1 question for PTR of
+        // _companion-link._tcp.local. — Makaretu's Message class can
+        // serialise this for us.
+        var question = new Question
+        {
+            Name  = CompanionService + ".local",
+            Type  = DnsType.PTR,
+            Class = DnsClass.IN,
+        };
+        var query = new Message { Id = 0 };
+        query.Questions.Add(question);
+        var queryBytes = query.ToByteArray();
+
+        await udp.SendAsync(queryBytes, queryBytes.Length, new IPEndPoint(ip, 5353)).ConfigureAwait(false);
+
+        // Wait for the response or timeout.
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout.Value);
+        try
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                var res = await udp.ReceiveAsync(cts.Token).ConfigureAwait(false);
+                // Some routers / responders echo our own query back; ignore those.
+                if (res.RemoteEndPoint.Address.Equals(IPAddress.Loopback)) continue;
+
+                var msg = new Message();
+                msg.Read(res.Buffer, 0, res.Buffer.Length);
+
+                // Find any companion-link SRV in the answer set. The PTR
+                // points us at an instance name; the SRV gives us the port.
+                var records = msg.Answers.Concat(msg.AdditionalRecords).ToArray();
+                var srv = records.OfType<SRVRecord>().FirstOrDefault();
+                if (srv is null) continue;
+
+                var dev = TryResolveFromMessage(srv.Name, msg);
+                if (dev is not null) return dev;
+            }
+        }
+        catch (OperationCanceledException) { }
+        return null;
+    }
+
+    /// <summary>
     /// Send an active query for every configured service and start a
     /// periodic re-query timer (<see cref="RequeryInterval"/>). Slow
     /// / sleeping devices often miss the first shout — repeating

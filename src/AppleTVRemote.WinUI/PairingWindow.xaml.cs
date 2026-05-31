@@ -147,6 +147,86 @@ public sealed partial class PairingWindow : WindowEx
         await StartDiscoveryAsync();
     }
 
+    private async void OnEnterIpClicked(object sender, RoutedEventArgs e)
+    {
+        // Workaround for Windows multicast unreliability — direct unicast
+        // probe to a user-supplied IP. Apple TVs reply to unicast in ms.
+        var box = new TextBox { PlaceholderText = "192.168.1.42", FontSize = 16 };
+        var dlg = new ContentDialog
+        {
+            Title           = "Apple TV IP address",
+            Content         = new StackPanel
+            {
+                Spacing = 10,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Find it on your Apple TV under Settings → Network → Wi-Fi/Ethernet → IP address.",
+                        TextWrapping = TextWrapping.Wrap,
+                        Opacity = 0.8, FontSize = 12,
+                    },
+                    box,
+                },
+            },
+            PrimaryButtonText   = "Probe",
+            SecondaryButtonText = "Cancel",
+            DefaultButton       = ContentDialogButton.Primary,
+            XamlRoot            = Content.XamlRoot,
+        };
+        var result = await dlg.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+        var ipText = (box.Text ?? string.Empty).Trim();
+        if (!System.Net.IPAddress.TryParse(ipText, out var ip))
+        {
+            var bad = new ContentDialog
+            {
+                Title = "Apple TV Remote",
+                Content = $"'{ipText}' isn't a valid IP address.",
+                CloseButtonText = "OK",
+                XamlRoot = Content.XamlRoot,
+            };
+            await bad.ShowAsync();
+            return;
+        }
+
+        HeaderText.Text = $"Probing {ip}…";
+        SubText.Text    = "Sending unicast mDNS query directly to the TV.";
+        try
+        {
+            var dev = await DeviceDiscovery.UnicastProbeAsync(ip,
+                timeout: TimeSpan.FromSeconds(4));
+            if (dev is null)
+            {
+                var nope = new ContentDialog
+                {
+                    Title = "Apple TV Remote",
+                    Content = $"No reply from {ip}. Check the address and that the TV is awake.",
+                    CloseButtonText = "OK",
+                    XamlRoot = Content.XamlRoot,
+                };
+                await nope.ShowAsync();
+                UpdateDeviceListVisibility();
+                return;
+            }
+            _picked = dev;
+            StopDiscovery();
+            SetStage2(dev);
+        }
+        catch (Exception ex)
+        {
+            var err = new ContentDialog
+            {
+                Title = "Apple TV Remote",
+                Content = $"Probe failed: {ex.Message}",
+                CloseButtonText = "OK",
+                XamlRoot = Content.XamlRoot,
+            };
+            await err.ShowAsync();
+            UpdateDeviceListVisibility();
+        }
+    }
+
     // ─── Stage 2: PIN entry ────────────────────────────────────────
 
     private async void OnDeviceSelected(object sender, SelectionChangedEventArgs e)
