@@ -19,41 +19,64 @@ Secondary reference:
 - README, PLAN, LICENSE, .gitignore.
 - Repo initialised; first commit.
 
-## Phase 1 — Primitives (1–2 weeks)
+## Phase 1 — Primitives *(done)*
 
-Pure-data, no-IO building blocks. Port and unit-test each in isolation
-against pyatv-generated fixtures.
+Pure-data, no-IO building blocks. Each primitive is unit-tested against
+pyatv- or `cryptography`-generated fixtures (byte-exact). Commit/file
+mapping:
 
-- **TLV8** — Apple's HomeKit-style type-length-value encoding. Single
-  file (~150 lines of Python in pyatv).
-- **OPACK** — Apple's binary serialisation format used by the
-  Companion protocol. Modest file (~500 lines).
-- **BigInteger glue** — .NET has `System.Numerics.BigInteger` built
-  in, so no third-party BigInt dep needed (unlike the Swift port).
-- **CryptoUtils** — wrappers over .NET's `System.Security.Cryptography`
-  for: ChaCha20-Poly1305, Curve25519 (X25519), Ed25519, SRP-6a, HKDF.
-  .NET 9+ has Curve25519/Ed25519 natively; earlier versions need
-  Bouncy Castle. **Decide: pin .NET version based on this.**
+- **TLV8** — `src/AppleTVProtocol/Tlv8.cs` (22 tests). HomeKit-style
+  type-length-value encoding.
+- **OPACK** — `src/AppleTVProtocol/Opack.cs` (50 tests). Companion's
+  binary serialisation.
+- **CryptoUtils** — `src/AppleTVProtocol/Crypto.cs` (15 tests):
+  - `Crypto.HkdfSha512` — HKDF-SHA512
+  - `ChaCha20Poly1305_8ByteNonce` — HAP's 8-byte-nonce AEAD convention
+  - `Srp6aClient` — SRP-6a client (3072-bit prime, generator 5,
+    SHA-512, "Pair-Setup" identity). Byte-for-byte matches
+    pyatv/srptools.
+- **Curves** — `src/AppleTVProtocol/Curves.cs` (13 tests) via
+  BouncyCastle (pure-managed — keeps single-file publish + MSIX
+  simple). Ed25519 sign/verify, X25519 ECDH. .NET 10's BCL still has
+  no managed versions of either curve.
+- **BigInteger glue** — used inside `Crypto.cs`. .NET's built-in
+  `System.Numerics.BigInteger` is enough.
 
-**Deliverable:** unit tests passing — every primitive matches pyatv's
-output for the same input.
+**Deliverable met:** 100+ primitive-level tests pass on Ubuntu + Windows.
 
-## Phase 2 — Discovery + pairing (1–2 weeks)
+## Phase 2 — Discovery + pairing (in progress)
 
-- **mDNS/Bonjour discovery** — find Apple TVs on the LAN.
-  - .NET: use `Makaretu.Dns` or `Tmds.MDns` (active libraries) for
-    the `_companion-link._tcp.local.` browse.
-  - First-class .NET doesn't ship mDNS; one of these libraries is
-    required.
-- **HAP pair-setup** — the SRP-6a-based first-time pairing flow that
-  exchanges a PIN and produces long-term credentials (Ed25519 keypair
-  + Apple TV public key).
-- **HAP pair-verify** — the Curve25519-based session-key exchange done
-  on every reconnect using the stored credentials.
+### 2a. mDNS discovery *(done)*
 
-**Deliverable:** CLI command `atv pair <name>` works end-to-end:
-discovers the device, runs pair-setup, prompts for the PIN displayed
-on the Apple TV, stores credentials in `%APPDATA%\AppleTV-WindowsRemote\`.
+- `src/AppleTVProtocol/Discovery.cs` (9 tests).
+- Browses `_companion-link._tcp.local.` via `Makaretu.Dns`.
+- `AppleTVDevice` record surfaces name, IPv4/IPv6 address, port, and
+  TXT key/value pairs.
+- CLI: `atv discover [--seconds N] [--service ...]`.
+
+### 2b. Credential persistence *(done)*
+
+- `src/AppleTVProtocol/Credentials.cs` (10 tests).
+- JSON-on-disk under `%APPDATA%\AppleTV-WindowsRemote\credentials\`
+  (or `~/.config/...` on macOS/Linux). One file per paired Apple TV.
+- `HapCredentials` matches what pair-setup will produce.
+
+### 2c. HAP pair-setup *(next)*
+
+- Companion frame transport (raw TCP, 4-byte length-prefixed binary
+  frames; **not** HTTP — that's the older HAP).
+- Pair-setup M1/M3/M5 builders + M2/M4/M6 parsers (TLV8 inside OPACK
+  envelope inside Companion frame).
+- Drive the existing `Srp6aClient` through the 6-step exchange.
+- Persist the resulting `HapCredentials` via `CredentialStore`.
+
+### 2d. HAP pair-verify *(after pair-setup)*
+
+- Curve25519 (X25519) session-key exchange on every reconnect using
+  the stored credentials. Already have `X25519PrivateKey.Agree` and
+  `Ed25519PrivateKey.Sign` ready.
+
+**Deliverable:** `atv pair <device-id-or-name>` works end-to-end.
 
 ## Phase 3 — Companion session + basic commands (1 week)
 

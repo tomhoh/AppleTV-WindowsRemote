@@ -5,12 +5,13 @@ no Python, no Electron, no Node. A port of the Apple TV Companion /
 MRP protocols (Apple's reverse-engineered remote-control protocols)
 to .NET, fronted by a WPF system-tray UI.
 
-> **Status: Phase 1 protocol primitives landed.** TLV8, OPACK, and the
-> HAP crypto primitives (HKDF-SHA512, ChaCha20-Poly1305 with HAP's
-> 8-byte-nonce convention, SRP-6a client with the 3072-bit HAP group)
-> are implemented and tested byte-exact against the pyatv/srptools
-> reference (87 tests passing). No mDNS / pair-verify / Companion
-> session / WPF UI yet — see [PLAN.md](PLAN.md) for the full roadmap.
+> **Status: Phase 1 + 2a/2b landed.** TLV8, OPACK, HAP crypto
+> primitives (HKDF-SHA512, ChaCha20-Poly1305 with HAP's 8-byte-nonce
+> convention, SRP-6a with the 3072-bit HAP group), Ed25519 signing,
+> X25519 ECDH, mDNS device discovery (`atv discover`), and JSON
+> credential persistence. **119 tests passing** on Ubuntu + Windows
+> CI. Next up: HAP pair-setup over the Companion frame transport. See
+> [PLAN.md](PLAN.md) for the full roadmap.
 
 ## Why this exists
 
