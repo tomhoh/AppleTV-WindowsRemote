@@ -104,7 +104,7 @@ static async Task<int> DiscoverCommand(string[] args)
     Console.WriteLine($"Browsing {service} for {seconds}s …");
     using var discovery = new DeviceDiscovery(service);
     discovery.Discovered += (_, dev) =>
-        Console.WriteLine($"  found  {dev.Name,-24}  {dev.Address}:{dev.Port}  model={dev.Model ?? "?"}  id={dev.DeviceId ?? "?"}");
+        Console.WriteLine($"  found  {dev.Name,-24}  {dev.Address}:{dev.Port}  model={dev.ModelFriendly}  rpmd={dev.Rpmd ?? "?"}");
 
     var devices = await discovery.BrowseAsync(TimeSpan.FromSeconds(seconds));
 
