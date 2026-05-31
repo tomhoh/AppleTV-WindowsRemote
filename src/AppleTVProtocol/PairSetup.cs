@@ -42,16 +42,16 @@ public static class PairSetupMessages
 {
     public const string PairingDataKey = "_pd";
     public const string PinTypeKey     = "_pwTy";
-    public const string XidKey         = "_x";
 
     /// <summary>
     /// M1 outbound — "I want to start pair-setup, PIN-based".
-    /// pyatv's <c>send_opack</c> auto-adds an <c>_x</c> XID to every
-    /// outgoing OPACK envelope; without it, real Apple TVs silently
-    /// drop the frame, so we mirror that behaviour and require an XID
-    /// from the caller.
+    ///
+    /// (Earlier versions added an _x XID here because pyatv's
+    /// send_opack auto-adds one. The sibling Swift port doesn't,
+    /// pairs successfully, and matches Apple's own Remote app on the
+    /// wire — so _x is optional and we drop it for parity.)
     /// </summary>
-    public static byte[] BuildM1(int xid)
+    public static byte[] BuildM1()
     {
         var tlv = Tlv8.Write(new Dictionary<byte, byte[]>
         {
@@ -62,12 +62,11 @@ public static class PairSetupMessages
         {
             { PairingDataKey, tlv },
             { PinTypeKey,     1 },
-            { XidKey,         xid },
         });
     }
 
     /// <summary>M3 outbound — client SRP public key + proof.</summary>
-    public static byte[] BuildM3(byte[] clientPublicKey, byte[] proofM1, int xid)
+    public static byte[] BuildM3(byte[] clientPublicKey, byte[] proofM1)
     {
         var tlv = Tlv8.Write(new Dictionary<byte, byte[]>
         {
@@ -79,12 +78,11 @@ public static class PairSetupMessages
         {
             { PairingDataKey, tlv },
             { PinTypeKey,     1 },
-            { XidKey,         xid },
         });
     }
 
     /// <summary>M5 outbound — wraps encrypted identifier+publickey+signature.</summary>
-    public static byte[] BuildM5(byte[] encryptedData, int xid)
+    public static byte[] BuildM5(byte[] encryptedData)
     {
         var tlv = Tlv8.Write(new Dictionary<byte, byte[]>
         {
@@ -95,7 +93,6 @@ public static class PairSetupMessages
         {
             { PairingDataKey, tlv },
             { PinTypeKey,     1 },
-            { XidKey,         xid },
         });
     }
 
@@ -208,15 +205,10 @@ public sealed class CompanionPairSetup
             return PairSetupMessages.ParsePairingData(payload);
         }
 
-        // pyatv hands out XIDs from an int counter and bumps it on every
-        // send_opack. Match that — Apple TVs silently drop frames that
-        // don't include an _x field.
-        int xid = Random.Shared.Next(1, int.MaxValue);
-
         try
         {
             // ── M1 → ── ── M2 ← ──
-            await _conn.SendAsync(CompanionFrameType.PS_Start, PairSetupMessages.BuildM1(xid++), cancel).ConfigureAwait(false);
+            await _conn.SendAsync(CompanionFrameType.PS_Start, PairSetupMessages.BuildM1(), cancel).ConfigureAwait(false);
             var m2 = await AwaitReplyAsync().ConfigureAwait(false);
             if (!m2.TryGetValue((byte)Tlv8Tag.Salt, out var atvSalt) ||
                 !m2.TryGetValue((byte)Tlv8Tag.PublicKey, out var atvPub))
@@ -224,7 +216,7 @@ public sealed class CompanionPairSetup
 
             // ── M3 → ── ── M4 ← ──
             var (A, M1proof) = srp.ProcessChallenge(atvSalt, atvPub);
-            await _conn.SendAsync(CompanionFrameType.PS_Next, PairSetupMessages.BuildM3(A, M1proof, xid++), cancel).ConfigureAwait(false);
+            await _conn.SendAsync(CompanionFrameType.PS_Next, PairSetupMessages.BuildM3(A, M1proof), cancel).ConfigureAwait(false);
             var m4 = await AwaitReplyAsync().ConfigureAwait(false);
             if (!m4.TryGetValue((byte)Tlv8Tag.Proof, out var atvProof))
                 throw new HapPairingException("M4 reply missing proof");
@@ -238,22 +230,33 @@ public sealed class CompanionPairSetup
             var deviceInfo = Concat(iosDeviceX, clientPairingId, clientPublicKey);
             var deviceSignature = ed.Sign(deviceInfo);
 
+            // CRITICAL: Name TLV (tag 0x11) MUST always be included in M5,
+            // even if the caller didn't pass a display name. From the
+            // sibling Swift port:
+            //   "Companion-specific: tag=0x11 with OPACK {"name": ...}.
+            //    Without this the ATV stores us in the HAP-only controller
+            //    store, which the Companion pair-verify service does NOT
+            //    check → error=2 (Authentication) in pair-verify M4."
+            //
+            // Fall back to a sensible default (machine name) so we never
+            // emit a frame without it.
+            var nameForController = string.IsNullOrEmpty(displayName)
+                ? (Environment.MachineName ?? "Windows Remote")
+                : displayName;
+
             var innerTlvEntries = new Dictionary<byte, byte[]>
             {
                 { (byte)Tlv8Tag.Identifier, clientPairingId },
                 { (byte)Tlv8Tag.PublicKey,  clientPublicKey },
                 { (byte)Tlv8Tag.Signature,  deviceSignature },
+                { (byte)Tlv8Tag.Name,       Opack.Pack(
+                    new Dictionary<string, object?> { { "name", nameForController } }) },
             };
-            if (!string.IsNullOrEmpty(displayName))
-            {
-                innerTlvEntries[(byte)Tlv8Tag.Name] = Opack.Pack(
-                    new Dictionary<string, object?> { { "name", displayName } });
-            }
             var innerTlv = Tlv8.Write(innerTlvEntries);
 
             var chacha = new ChaCha20Poly1305_8ByteNonce(sessionKey);
             var encryptedM5 = chacha.Encrypt(innerTlv, Encoding.ASCII.GetBytes("PS-Msg05"));
-            await _conn.SendAsync(CompanionFrameType.PS_Next, PairSetupMessages.BuildM5(encryptedM5, xid++), cancel).ConfigureAwait(false);
+            await _conn.SendAsync(CompanionFrameType.PS_Next, PairSetupMessages.BuildM5(encryptedM5), cancel).ConfigureAwait(false);
 
             // ── M6 ← (encrypted inner TLV) ──
             var m6 = await AwaitReplyAsync().ConfigureAwait(false);

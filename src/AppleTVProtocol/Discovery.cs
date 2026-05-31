@@ -59,27 +59,58 @@ public sealed record AppleTVDevice(
     public string? AirPlayModel => TxtRecords.GetValueOrDefault("model");
 
     /// <summary>
-    /// True when the device looks like an Apple TV / HomePod-class
-    /// peer. We accept TWO signals (mirrors pyatv, which queries both
-    /// service types):
-    ///   - <c>rpmd</c> TXT key set (from <c>_companion-link._tcp</c>) —
-    ///     Apple's internal model code (K66AP, J42dAP, J305AP …);
-    ///   - <c>model</c> TXT key starts with "AppleTV" or "AudioAccessory"
-    ///     (from <c>_airplay._tcp</c>).
-    /// Some Apple TVs only advertise the latter promptly — the
-    /// companion-link advert may be slow or sleeping. iPhones in
-    /// screen-mirror mode and Macs with Sharing on don't set either
-    /// of these.
+    /// True when the device looks like an Apple TV. Matches the
+    /// sibling Swift port's <c>companionTXTIsAppleTV</c> exactly:
+    /// <list type="bullet">
+    /// <item>If <c>rpMd</c> (companion-link TXT key — case-insensitive
+    /// 'rpMd') starts with "AppleTV" → yes.</item>
+    /// <item>If <c>rpMd</c> is present but doesn't start with AppleTV
+    /// (HomePod = "AudioAccessory*", Mac = "Mac*") → no.</item>
+    /// <item>If <c>rpMd</c> is missing, fall back to <c>rpFl</c>: bit
+    /// <c>0x4000</c> is "PIN pairing supported" — set on Apple TVs,
+    /// cleared on Macs (0x20000) and HomePods (0x627B2/0x62792).</item>
+    /// <item>If neither field is present → assume yes (Apple TVs
+    /// sometimes omit TXT records at browse time; we'd rather show
+    /// them and let the user pick than silently hide them).</item>
+    /// </list>
+    /// Also accepts the AirPlay-side <c>model</c> field (values like
+    /// "AppleTV6,2") when we discovered the device via _airplay._tcp
+    /// instead of _companion-link._tcp.
     /// </summary>
     public bool IsAppleTV
     {
         get
         {
-            if (!string.IsNullOrEmpty(Rpmd)) return true;
-            var m = AirPlayModel;
-            return !string.IsNullOrEmpty(m)
-                && (m.StartsWith("AppleTV",        StringComparison.OrdinalIgnoreCase)
-                 || m.StartsWith("AudioAccessory", StringComparison.OrdinalIgnoreCase));
+            var rpMd = Rpmd ?? string.Empty;
+            if (rpMd.StartsWith("AppleTV", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (rpMd.Length > 0)
+                return false;   // present but not AppleTV → HomePod / Mac
+
+            // AirPlay side gives us a "model" field with values like
+            // "AppleTV11,1" / "AudioAccessory5,1" — only the AppleTV*
+            // ones are TVs.
+            var airplay = AirPlayModel ?? string.Empty;
+            if (airplay.StartsWith("AppleTV", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (airplay.Length > 0)
+                return false;
+
+            // Fall back to the rpFl bit-0x4000 check (PIN pairing supported).
+            var rpFl = TxtRecords.GetValueOrDefault("rpFl")
+                       ?? TxtRecords.GetValueOrDefault("rpfl")
+                       ?? string.Empty;
+            if (rpFl.Length > 0)
+            {
+                var clean = rpFl.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                    ? rpFl.Substring(2) : rpFl;
+                if (uint.TryParse(clean, System.Globalization.NumberStyles.HexNumber, null, out var flags))
+                    return (flags & 0x4000) != 0;
+            }
+
+            // Nothing tells us either way — be lenient. Apple TVs sometimes
+            // ship TXT-less browse records and we'd rather show them.
+            return true;
         }
     }
 

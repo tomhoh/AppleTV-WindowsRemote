@@ -19,25 +19,20 @@ public class PairSetupTests
 
     // ─── Pure envelope builders ───
 
-    // Pinned XID so envelope bytes are deterministic (real driver
-    // generates one randomly; we pass a known value here).
-    private const int XidFixture = 12345;
-
     [Fact]
     public void BuildM1_MatchesPyatvFixture()
     {
-        const string M1Hex = "e3435f706476000100060101455f7077547909425f78313930";
-        Assert.Equal(M1Hex, Hex(PairSetupMessages.BuildM1(XidFixture)));
+        const string M1Hex = "e2435f706476000100060101455f7077547909";
+        Assert.Equal(M1Hex, Hex(PairSetupMessages.BuildM1()));
     }
 
     [Fact]
     public void BuildM3_HeadAndTailMatchPyatv()
     {
-        const string M3HexFirst64 = "e3435f706492c90106010303ffaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        const string M3HexLast64  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb455f7077547909425f78313930";
+        const string M3HexFirst64 = "e2435f706492c90106010303ffaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const string M3HexLast64  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb455f7077547909";
         var bytes = PairSetupMessages.BuildM3(new byte[384].Select(_ => (byte)0xAA).ToArray(),
-                                              new byte[64] .Select(_ => (byte)0xBB).ToArray(),
-                                              XidFixture);
+                                              new byte[64] .Select(_ => (byte)0xBB).ToArray());
         var hex = Hex(bytes);
         Assert.StartsWith(M3HexFirst64, hex);
         Assert.EndsWith  (M3HexLast64,  hex);
@@ -46,8 +41,8 @@ public class PairSetupTests
     [Fact]
     public void BuildM5_MatchesPyatvFixture()
     {
-        const string M5Hex = "e3435f706491550601050550cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc455f7077547909425f78313930";
-        var bytes = PairSetupMessages.BuildM5(new byte[80].Select(_ => (byte)0xCC).ToArray(), XidFixture);
+        const string M5Hex = "e2435f706491550601050550cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc455f7077547909";
+        var bytes = PairSetupMessages.BuildM5(new byte[80].Select(_ => (byte)0xCC).ToArray());
         Assert.Equal(M5Hex, Hex(bytes));
     }
 
@@ -130,19 +125,9 @@ public class PairSetupTests
         var payload = new byte[payloadLen];
         got = 0; while (got < payloadLen) got += await s.ReadAsync(payload.AsMemory(got));
 
-        // M1 wire bytes are now non-deterministic (driver generates a
-        // random XID per call), so parse the envelope and check its
-        // shape instead of matching a fixed hex.
-        var (unpacked, _) = Opack.Unpack(payload);
-        Assert.True(unpacked is System.Collections.IDictionary, $"M1 wasn't an OPACK dict: {unpacked?.GetType().Name}");
-        var dict = (System.Collections.IDictionary)unpacked!;
-        Assert.True(dict.Contains("_pd"),   "M1 envelope missing _pd (pairing data)");
-        Assert.True(dict.Contains("_pwTy"), "M1 envelope missing _pwTy");
-        Assert.True(dict.Contains("_x"),    "M1 envelope missing _x (XID) — Apple TVs drop frames without it");
-        // _pd should be a TLV8 buffer with Method=PairSetup + SeqNo=M1
-        var tlv = Tlv8.Read((byte[])dict["_pd"]!);
-        Assert.Equal((byte)Tlv8Method.PairSetup, tlv[(byte)Tlv8Tag.Method][0]);
-        Assert.Equal((byte)Tlv8State.M1,         tlv[(byte)Tlv8Tag.SeqNo] [0]);
+        // M1 wire bytes must match the pinned BuildM1 fixture exactly.
+        const string M1Hex = "e2435f706476000100060101455f7077547909";
+        Assert.Equal(M1Hex, Hex(payload));
 
         // Tear everything down: cancel the driver, close the server.
         driverCts.Cancel();

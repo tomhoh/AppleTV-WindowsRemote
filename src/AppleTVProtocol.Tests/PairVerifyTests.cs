@@ -23,7 +23,7 @@ public class PairVerifyTests
     public void BuildM1_OpackEnvelopeRoundTripsThroughParser()
     {
         var pub = new byte[32].Select((_, i) => (byte)(0xA0 + i)).ToArray();
-        var envelope = PairVerifyMessages.BuildM1(pub, xid: 1);
+        var envelope = PairVerifyMessages.BuildM1(pub);
         var parsed = PairVerifyMessages.ParsePairingData(envelope);
         Assert.Equal(pub, parsed[(byte)Tlv8Tag.PublicKey]);
         Assert.Equal(new byte[] { (byte)Tlv8State.M1 }, parsed[(byte)Tlv8Tag.SeqNo]);
@@ -33,7 +33,7 @@ public class PairVerifyTests
     public void BuildM3_OpackEnvelopeRoundTripsThroughParser()
     {
         var enc = new byte[64].Select((_, i) => (byte)(0xC0 + i)).ToArray();
-        var envelope = PairVerifyMessages.BuildM3(enc, xid: 2);
+        var envelope = PairVerifyMessages.BuildM3(enc);
         var parsed = PairVerifyMessages.ParsePairingData(envelope);
         Assert.Equal(enc, parsed[(byte)Tlv8Tag.EncryptedData]);
         Assert.Equal(new byte[] { (byte)Tlv8State.M3 }, parsed[(byte)Tlv8Tag.SeqNo]);
