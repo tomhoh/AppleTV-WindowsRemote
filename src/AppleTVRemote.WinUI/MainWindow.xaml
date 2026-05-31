@@ -5,52 +5,157 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:winuiex="using:WinUIEx"
     Title="Apple TV Remote"
-    Width="320" Height="480"
+    Width="200" Height="380"
     IsMinimizable="False"
-    IsMaximizable="False">
+    IsMaximizable="False"
+    IsResizable="False">
 
-    <Grid Padding="12" RowSpacing="12">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />     <!-- header -->
-            <RowDefinition Height="*"    />     <!-- d-pad  -->
-            <RowDefinition Height="Auto" />     <!-- bottom row -->
-        </Grid.RowDefinitions>
+    <winuiex:WindowEx.SystemBackdrop>
+        <MicaBackdrop Kind="BaseAlt" />
+    </winuiex:WindowEx.SystemBackdrop>
 
-        <!-- Header -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
-            <TextBlock Text="Device:" VerticalAlignment="Center" />
-            <ComboBox  x:Name="DeviceCombo" Width="200" />
-            <Button    Content="Pair…" Click="OnPairClicked" />
-        </StackPanel>
+    <Grid>
+        <Grid.Resources>
+            <!-- Glassy button material — adapts naturally to the Mica backdrop. -->
+            <SolidColorBrush x:Key="ButtonMaterial" Color="#33FFFFFF" />
+            <SolidColorBrush x:Key="ButtonStroke"   Color="#33FFFFFF" />
+            <SolidColorBrush x:Key="ClickpadRing"   Color="#3FFFFFFF" />
 
-        <!-- 3x3 D-pad -->
-        <Grid Grid.Row="1" RowSpacing="6" ColumnSpacing="6"
-              HorizontalAlignment="Center" VerticalAlignment="Center">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="64" />
-                <RowDefinition Height="64" />
-                <RowDefinition Height="64" />
-            </Grid.RowDefinitions>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="64" />
-                <ColumnDefinition Width="64" />
-                <ColumnDefinition Width="64" />
-            </Grid.ColumnDefinitions>
+            <!-- Pill button (Menu / Home / Siri / PlayPause). -->
+            <Style x:Key="PillButton" TargetType="Button">
+                <Setter Property="Width"  Value="44" />
+                <Setter Property="Height" Value="44" />
+                <Setter Property="Background"   Value="{StaticResource ButtonMaterial}" />
+                <Setter Property="BorderBrush"  Value="{StaticResource ButtonStroke}" />
+                <Setter Property="BorderThickness" Value="0.5" />
+                <Setter Property="CornerRadius"    Value="22" />
+                <Setter Property="FontSize"   Value="16" />
+                <Setter Property="Padding"    Value="0" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment"   Value="Center" />
+            </Style>
 
-            <Button Grid.Row="0" Grid.Column="1" Content="&#x25B2;" Tag="Up"     Click="OnHidClicked" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
-            <Button Grid.Row="1" Grid.Column="0" Content="&#x25C0;" Tag="Left"   Click="OnHidClicked" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
-            <Button Grid.Row="1" Grid.Column="1" Content="&#x25CF;" Tag="Select" Click="OnHidClicked" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
-            <Button Grid.Row="1" Grid.Column="2" Content="&#x25B6;" Tag="Right"  Click="OnHidClicked" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
-            <Button Grid.Row="2" Grid.Column="1" Content="&#x25BC;" Tag="Down"   Click="OnHidClicked" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
-        </Grid>
+            <!-- Power button — small circular button in top-right. -->
+            <Style x:Key="PowerButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+                <Setter Property="Width"  Value="22" />
+                <Setter Property="Height" Value="22" />
+                <Setter Property="CornerRadius" Value="11" />
+                <Setter Property="FontSize" Value="10" />
+            </Style>
+        </Grid.Resources>
 
-        <!-- Bottom row -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="4">
-            <Button Content="Menu"   Tag="Menu"       Click="OnHidClicked" />
-            <Button Content="Home"   Tag="Home"       Click="OnHidClicked" />
-            <Button Content="&#x23EF;" Tag="PlayPause" Click="OnHidClicked" />
-            <Button Content="Vol&#x2212;" Tag="VolumeDown" Click="OnHidClicked" />
-            <Button Content="Vol+"  Tag="VolumeUp"   Click="OnHidClicked" />
+        <!-- Top-right power -->
+        <Button x:Name="PowerBtn"
+                Style="{StaticResource PowerButton}"
+                Content="&#xE7E8;"
+                FontFamily="Segoe MDL2 Assets"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="0,10,12,0"
+                Click="OnPowerClicked" />
+
+        <!-- Device picker (hidden until we have credentials). -->
+        <ComboBox x:Name="DeviceCombo"
+                  Visibility="Collapsed"
+                  Width="140"
+                  HorizontalAlignment="Left"
+                  VerticalAlignment="Top"
+                  Margin="12,10,0,0" />
+
+        <StackPanel Margin="0,32,0,0" HorizontalAlignment="Center" Spacing="12">
+
+            <!-- Clickpad -->
+            <Grid x:Name="Clickpad"
+                  Width="130" Height="130"
+                  Margin="0,8,0,4"
+                  Background="Transparent"
+                  PointerPressed="OnClickpadPointerPressed"
+                  PointerMoved="OnClickpadPointerMoved"
+                  PointerReleased="OnClickpadPointerReleased">
+
+                <Ellipse Fill="{StaticResource ClickpadRing}" Stroke="#33FFFFFF" StrokeThickness="0.5" />
+
+                <Path x:Name="QuadrantHighlight"
+                      Fill="#3CFFFFFF"
+                      IsHitTestVisible="False"
+                      Visibility="Collapsed" />
+
+                <Ellipse x:Name="SelectDisc"
+                         Width="72" Height="72"
+                         Fill="#A6FFFFFF"
+                         Stroke="#33FFFFFF"
+                         StrokeThickness="0.5"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center"
+                         RenderTransformOrigin="0.5,0.5">
+                    <Ellipse.RenderTransform>
+                        <ScaleTransform x:Name="SelectScale" />
+                    </Ellipse.RenderTransform>
+                </Ellipse>
+            </Grid>
+
+            <!-- Row 1: Menu / Home / Siri -->
+            <Grid Margin="8,0,8,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition />
+                    <ColumnDefinition />
+                    <ColumnDefinition />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Style="{StaticResource PillButton}"
+                        FontFamily="Segoe MDL2 Assets" Content="&#xE76B;"
+                        Tag="Menu"  Click="OnHidClicked" />
+                <Button Grid.Column="1" Style="{StaticResource PillButton}"
+                        FontFamily="Segoe MDL2 Assets" Content="&#xE7F4;"
+                        Tag="Home"  Click="OnHidClicked" />
+                <Button Grid.Column="2" Style="{StaticResource PillButton}"
+                        FontFamily="Segoe MDL2 Assets" Content="&#xE720;"
+                        Tag="Siri"  Click="OnHidClicked" />
+            </Grid>
+
+            <!-- Row 2: PlayPause + tall volume pill -->
+            <Grid Margin="8,0,8,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition />
+                    <ColumnDefinition />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Style="{StaticResource PillButton}"
+                        FontFamily="Segoe MDL2 Assets" Content="&#xF5B0;"
+                        Tag="PlayPause"
+                        HorizontalAlignment="Left"
+                        Click="OnHidClicked" />
+
+                <Border Grid.Column="1"
+                        Width="44" Height="92"
+                        HorizontalAlignment="Right"
+                        CornerRadius="22"
+                        Background="{StaticResource ButtonMaterial}"
+                        BorderBrush="{StaticResource ButtonStroke}"
+                        BorderThickness="0.5"
+                        PointerPressed="OnVolumePointerPressed">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition />
+                            <RowDefinition Height="1" />
+                            <RowDefinition />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0"
+                                   FontFamily="Segoe MDL2 Assets"
+                                   FontSize="11"
+                                   Text="&#xE995;"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   IsHitTestVisible="False" />
+                        <Rectangle Grid.Row="1" Fill="#33000000" />
+                        <TextBlock Grid.Row="2"
+                                   FontFamily="Segoe MDL2 Assets"
+                                   FontSize="11"
+                                   Text="&#xE993;"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   IsHitTestVisible="False" />
+                    </Grid>
+                </Border>
+            </Grid>
         </StackPanel>
     </Grid>
 </winuiex:WindowEx>

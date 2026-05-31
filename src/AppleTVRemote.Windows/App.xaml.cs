@@ -40,6 +40,7 @@ public partial class App : Application
         {
             _popup = new MainWindow();
             _popup.Closed += (_, _) => _popup = null;
+            _popup.PositionNearTray();      // anchor to cursor before first show
             _popup.Show();
             _popup.Activate();
         }
@@ -49,6 +50,7 @@ public partial class App : Application
         }
         else
         {
+            _popup.PositionNearTray();      // re-anchor (cursor might be elsewhere now)
             _popup.Show();
             _popup.Activate();
         }

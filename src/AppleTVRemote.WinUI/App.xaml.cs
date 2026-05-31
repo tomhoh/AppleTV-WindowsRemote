@@ -46,12 +46,9 @@ public partial class App : Application
         {
             _popup = new MainWindow();
             _popup.Closed += (_, _) => _popup = null;
-            _popup.Activate();
         }
-        else
-        {
-            _popup.Activate();
-        }
+        _popup.PositionNearTray();      // anchor to tray-icon cursor location
+        _popup.Activate();
     }
 
     private sealed class RelayCommand : System.Windows.Input.ICommand
