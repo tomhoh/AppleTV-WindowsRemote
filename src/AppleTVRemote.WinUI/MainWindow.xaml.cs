@@ -96,48 +96,32 @@ public sealed partial class MainWindow : WindowEx
             p.IsMinimizable = false;
             p.IsResizable   = false;
         }
-        // Bigger rounded corners than the DWM default. DWM's
-        // DWM_WINDOW_CORNER_PREFERENCE caps at ~8 px ("Round"), so to
-        // get the macOS-popover-style ~22 px radius we clip the whole
-        // HWND to a rounded rect via SetWindowRgn. This affects the
-        // Mica fill, the border, everything — exactly what we want.
-        ApplyRoundedWindowRegion(22);
-        // Re-apply on size changes so the rounded mask stays correct.
-        AppWindow.Changed += (_, args) =>
-        {
-            if (args.DidSizeChange) ApplyRoundedWindowRegion(22);
-        };
-    }
-
-    private void ApplyRoundedWindowRegion(int radius)
-    {
+        // Force DWM to use its largest rounded-corner preference (~8 px).
+        // SetWindowRgn was tried for a bigger 22 px radius, but it fought
+        // with the system-drawn border and left a white frame behind —
+        // dropped that approach. Going larger than DWM's max would
+        // require ripping out the entire system chrome (no Mica, custom
+        // shadow/border), which isn't worth the complexity right now.
         try
         {
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-            var size = AppWindow.Size;
-            // +1 on the bottom/right because SetWindowRgn's rect is
-            // half-open — without it the bottom-right pixels render
-            // slightly cropped.
-            var hrgn = NativeMethods.CreateRoundRectRgn(0, 0, size.Width + 1, size.Height + 1, radius * 2, radius * 2);
-            if (hrgn != IntPtr.Zero)
-            {
-                NativeMethods.SetWindowRgn(hwnd, hrgn, true);
-            }
+            int pref = 2;   // DWMWCP_ROUND
+            NativeMethods.DwmSetWindowAttribute(hwnd,
+                NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE,
+                ref pref, sizeof(int));
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"ApplyRoundedWindowRegion failed: {ex}");
+            System.Diagnostics.Debug.WriteLine($"DwmSetWindowAttribute failed: {ex}");
         }
     }
 
     private static class NativeMethods
     {
-        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
-        internal static extern IntPtr CreateRoundRectRgn(int nLeftRect, int nTopRect,
-            int nRightRect, int nBottomRect, int nWidthEllipse, int nHeightEllipse);
+        internal const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
 
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        internal static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        internal static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
     }
 
     private void RefreshDevices()
