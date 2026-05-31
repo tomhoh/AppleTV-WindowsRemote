@@ -42,11 +42,16 @@ public static class PairSetupMessages
 {
     public const string PairingDataKey = "_pd";
     public const string PinTypeKey     = "_pwTy";
+    public const string XidKey         = "_x";
 
     /// <summary>
     /// M1 outbound — "I want to start pair-setup, PIN-based".
+    /// pyatv's <c>send_opack</c> auto-adds an <c>_x</c> XID to every
+    /// outgoing OPACK envelope; without it, real Apple TVs silently
+    /// drop the frame, so we mirror that behaviour and require an XID
+    /// from the caller.
     /// </summary>
-    public static byte[] BuildM1()
+    public static byte[] BuildM1(int xid)
     {
         var tlv = Tlv8.Write(new Dictionary<byte, byte[]>
         {
@@ -57,13 +62,12 @@ public static class PairSetupMessages
         {
             { PairingDataKey, tlv },
             { PinTypeKey,     1 },
+            { XidKey,         xid },
         });
     }
 
-    /// <summary>
-    /// M3 outbound — client SRP public key + proof.
-    /// </summary>
-    public static byte[] BuildM3(byte[] clientPublicKey, byte[] proofM1)
+    /// <summary>M3 outbound — client SRP public key + proof.</summary>
+    public static byte[] BuildM3(byte[] clientPublicKey, byte[] proofM1, int xid)
     {
         var tlv = Tlv8.Write(new Dictionary<byte, byte[]>
         {
@@ -75,13 +79,12 @@ public static class PairSetupMessages
         {
             { PairingDataKey, tlv },
             { PinTypeKey,     1 },
+            { XidKey,         xid },
         });
     }
 
-    /// <summary>
-    /// M5 outbound — wraps encrypted identifier+publickey+signature.
-    /// </summary>
-    public static byte[] BuildM5(byte[] encryptedData)
+    /// <summary>M5 outbound — wraps encrypted identifier+publickey+signature.</summary>
+    public static byte[] BuildM5(byte[] encryptedData, int xid)
     {
         var tlv = Tlv8.Write(new Dictionary<byte, byte[]>
         {
@@ -92,6 +95,7 @@ public static class PairSetupMessages
         {
             { PairingDataKey, tlv },
             { PinTypeKey,     1 },
+            { XidKey,         xid },
         });
     }
 
@@ -204,10 +208,15 @@ public sealed class CompanionPairSetup
             return PairSetupMessages.ParsePairingData(payload);
         }
 
+        // pyatv hands out XIDs from an int counter and bumps it on every
+        // send_opack. Match that — Apple TVs silently drop frames that
+        // don't include an _x field.
+        int xid = Random.Shared.Next(1, int.MaxValue);
+
         try
         {
             // ── M1 → ── ── M2 ← ──
-            await _conn.SendAsync(CompanionFrameType.PS_Start, PairSetupMessages.BuildM1(), cancel).ConfigureAwait(false);
+            await _conn.SendAsync(CompanionFrameType.PS_Start, PairSetupMessages.BuildM1(xid++), cancel).ConfigureAwait(false);
             var m2 = await AwaitReplyAsync().ConfigureAwait(false);
             if (!m2.TryGetValue((byte)Tlv8Tag.Salt, out var atvSalt) ||
                 !m2.TryGetValue((byte)Tlv8Tag.PublicKey, out var atvPub))
@@ -215,7 +224,7 @@ public sealed class CompanionPairSetup
 
             // ── M3 → ── ── M4 ← ──
             var (A, M1proof) = srp.ProcessChallenge(atvSalt, atvPub);
-            await _conn.SendAsync(CompanionFrameType.PS_Next, PairSetupMessages.BuildM3(A, M1proof), cancel).ConfigureAwait(false);
+            await _conn.SendAsync(CompanionFrameType.PS_Next, PairSetupMessages.BuildM3(A, M1proof, xid++), cancel).ConfigureAwait(false);
             var m4 = await AwaitReplyAsync().ConfigureAwait(false);
             if (!m4.TryGetValue((byte)Tlv8Tag.Proof, out var atvProof))
                 throw new HapPairingException("M4 reply missing proof");
@@ -244,7 +253,7 @@ public sealed class CompanionPairSetup
 
             var chacha = new ChaCha20Poly1305_8ByteNonce(sessionKey);
             var encryptedM5 = chacha.Encrypt(innerTlv, Encoding.ASCII.GetBytes("PS-Msg05"));
-            await _conn.SendAsync(CompanionFrameType.PS_Next, PairSetupMessages.BuildM5(encryptedM5), cancel).ConfigureAwait(false);
+            await _conn.SendAsync(CompanionFrameType.PS_Next, PairSetupMessages.BuildM5(encryptedM5, xid++), cancel).ConfigureAwait(false);
 
             // ── M6 ← (encrypted inner TLV) ──
             var m6 = await AwaitReplyAsync().ConfigureAwait(false);

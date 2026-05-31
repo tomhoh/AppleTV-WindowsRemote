@@ -78,16 +78,7 @@
                             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
                             <TextBlock Text="{Binding Subtitle}" FontSize="11" Opacity="0.6" />
                         </StackPanel>
-                        <!-- Mark devices that look like an Apple TV/HomePod (model
-                             TXT begins with AppleTV* or AudioAccessory*) so they
-                             stand out from the iPhone/Mac/etc. noise. -->
-                        <TextBlock Grid.Column="1"
-                                   Text="✓"
-                                   FontWeight="Bold"
-                                   Foreground="#2C7BE5"
-                                   VerticalAlignment="Center"
-                                   Margin="4,0,0,0"
-                                   Visibility="{Binding IsAppleDevice, Converter={StaticResource BoolToVis}}" />
+                        <!-- All rows are Apple TVs now (others filtered upstream) — no badge needed. -->
                     </Grid>
                 </DataTemplate>
             </ListBox.ItemTemplate>

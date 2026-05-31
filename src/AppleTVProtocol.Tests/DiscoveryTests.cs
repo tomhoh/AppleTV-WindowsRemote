@@ -55,7 +55,7 @@ public class DiscoveryTests
         Assert.Equal(ip, dev.Address);
         Assert.Equal(7000, dev.Port);
         Assert.Equal("AA:BB:CC:DD:EE:FF", dev.DeviceId);
-        Assert.Equal("AppleTV6,2", dev.Model);
+        Assert.Equal("AppleTV6,2", dev.TxtRecords["model"]);
         Assert.Equal("feedface", dev.TxtRecords["rpHN"]);
         Assert.Equal(string.Empty, dev.TxtRecords["ffl"]);  // boolean-style TXT
     }
@@ -107,7 +107,7 @@ public class DiscoveryTests
         Assert.NotNull(dev);
         Assert.Empty(dev!.TxtRecords);
         Assert.Null(dev.DeviceId);
-        Assert.Null(dev.Model);
+        Assert.Null(dev.Rpmd);
     }
 
     [Fact]

@@ -79,19 +79,14 @@ public sealed partial class PairingWindow : WindowEx
         _discovery.Discovered += (_, dev) =>
             dispatcher?.TryEnqueue(() =>
             {
+                // Strict filter: only Apple TVs (rpmd TXT key set to a
+                // known internal model code). Hides the iPhone / Mac /
+                // HomePod chatter that also advertises _companion-link.
+                if (!dev.IsAppleTV) return;
+
                 foreach (var existing in _devices)
                     if (existing.FullName == dev.FullName) return;
-                // Apple TVs / HomePods first, everything else below.
-                if (dev.IsAppleDevice)
-                {
-                    int i = 0;
-                    while (i < _devices.Count && _devices[i].IsAppleDevice) i++;
-                    _devices.Insert(i, dev);
-                }
-                else
-                {
-                    _devices.Add(dev);
-                }
+                _devices.Add(dev);
                 UpdateDeviceListVisibility();
             });
 

@@ -39,56 +39,54 @@ public sealed record AppleTVDevice(
     /// <summary>The "deviceid" TXT value (usually a MAC-like 6-byte hex) — stable across name changes.</summary>
     public string? DeviceId => TxtRecords.GetValueOrDefault("deviceid");
 
-    /// <summary>The "model" TXT value (e.g. "AppleTV6,2", "AppleTV11,1", "AudioAccessory1,1").</summary>
-    public string? Model => TxtRecords.GetValueOrDefault("model");
-
     /// <summary>
-    /// String form of <see cref="Address"/> — surfaced as its own
-    /// property so WPF XAML can bind to it (Run.Text doesn't render
-    /// IPAddress out of the box).
+    /// Apple's internal model code from the <c>rpmd</c> TXT key —
+    /// e.g. <c>K66AP</c>, <c>J42dAP</c>, <c>J305AP</c>. This is what
+    /// pyatv keys off (the older <c>model</c> key isn't set on
+    /// <c>_companion-link._tcp</c> records).
     /// </summary>
+    public string? Rpmd => TxtRecords.GetValueOrDefault("rpmd");
+
+    /// <summary>String form of <see cref="Address"/>. WPF Run.Text doesn't render IPAddress directly.</summary>
     public string AddressString => Address.ToString();
 
     /// <summary>
-    /// True if the model TXT record looks like an Apple TV or HomePod —
-    /// the two device families that actually accept Companion-protocol
-    /// pairings. Used to filter out random other devices that also
-    /// advertise <c>_companion-link._tcp.local.</c> (iPhones in screen-
-    /// mirroring mode, Macs with sharing on, etc.).
+    /// True only when the <c>rpmd</c> TXT key maps to a known Apple TV
+    /// internal model name (codes from pyatv's _INTERNAL_NAME_LIST plus
+    /// a few common newer ones). iPhones, Macs, HomePods, etc. that
+    /// also advertise <c>_companion-link._tcp.local.</c> do not have
+    /// these codes and are filtered out.
     /// </summary>
-    public bool IsAppleDevice
-    {
-        get
-        {
-            var m = Model;
-            if (string.IsNullOrEmpty(m)) return false;
-            return m.StartsWith("AppleTV",        StringComparison.OrdinalIgnoreCase)
-                || m.StartsWith("AudioAccessory", StringComparison.OrdinalIgnoreCase);
-        }
-    }
+    public bool IsAppleTV => Rpmd is { Length: > 0 } code && AppleTVInternalModelNames.Contains(code);
 
     /// <summary>
-    /// A friendlier label for the model TXT value. "AppleTV11,1" → "Apple TV 4K",
-    /// "AudioAccessory1,1" → "HomePod", and falls back to the raw model
-    /// string when we don't recognise the code.
+    /// Pretty name for the model — looks up the internal code in our
+    /// table, falls back to the raw code, falls back to "Apple TV".
     /// </summary>
-    public string ModelFriendly => Model switch
+    public string ModelFriendly => Rpmd switch
     {
-        null or ""        => "Unknown device",
-        "AppleTV5,3"      => "Apple TV HD",
-        "AppleTV6,2"      => "Apple TV 4K",
-        "AppleTV11,1"     => "Apple TV 4K (2nd gen)",
-        "AppleTV14,1"     => "Apple TV 4K (3rd gen)",
-        "AudioAccessory1,1" => "HomePod",
-        "AudioAccessory5,1" => "HomePod mini",
-        "AudioAccessory6,1" => "HomePod (2nd gen)",
-        var x when x.StartsWith("AppleTV",        StringComparison.OrdinalIgnoreCase) => "Apple TV (" + x + ")",
-        var x when x.StartsWith("AudioAccessory", StringComparison.OrdinalIgnoreCase) => "HomePod (" + x + ")",
-        var x => x,
+        null or "" => "Apple TV",
+        var code when AppleTVModelByInternalName.TryGetValue(code, out var pretty) => pretty,
+        var code => $"Apple TV ({code})",
     };
 
     /// <summary>"Apple TV 4K · 192.168.1.42:49152" — convenience for list rows.</summary>
     public string Subtitle => $"{ModelFriendly} · {AddressString}:{Port}";
+
+    // ── Apple TV internal-name table (synced with pyatv's _INTERNAL_NAME_LIST) ──
+    private static readonly Dictionary<string, string> AppleTVModelByInternalName = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["K66AP"]   = "Apple TV (2nd gen)",
+        ["J33AP"]   = "Apple TV (3rd gen)",
+        ["J33IAP"]  = "Apple TV (3rd gen)",
+        ["J42dAP"]  = "Apple TV HD",
+        ["J105aAP"] = "Apple TV 4K",
+        ["J305AP"]  = "Apple TV 4K (2nd gen)",
+        ["J255AP"]  = "Apple TV 4K (3rd gen)",
+    };
+
+    private static readonly HashSet<string> AppleTVInternalModelNames =
+        new(AppleTVModelByInternalName.Keys, StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class DeviceDiscovery : IDisposable

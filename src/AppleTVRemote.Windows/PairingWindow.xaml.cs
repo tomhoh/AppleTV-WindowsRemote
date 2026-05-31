@@ -114,23 +114,18 @@ public partial class PairingWindow : Window
         _discovery.Discovered += (_, dev) =>
             Dispatcher.Invoke(() =>
             {
+                // Strict filter: only show actual Apple TVs (rpmd TXT
+                // key set to a known Apple TV internal model code).
+                // Everything else that advertises _companion-link._tcp —
+                // iPhones in screen-mirror mode, Macs, HomePods — is
+                // hidden. Matches the macOS sibling's behaviour, which
+                // delegates this to pyatv's own filter.
+                if (!dev.IsAppleTV) return;
+
                 // De-dup by full Bonjour name.
                 foreach (var existing in _devices)
                     if (existing.FullName == dev.FullName) return;
-                // Apple TVs / HomePods at the top of the list, everything
-                // else (iPhones in screen-mirror mode, Macs with Sharing
-                // on, etc.) below. Mixed bag because everything that
-                // advertises _companion-link._tcp shows up here.
-                if (dev.IsAppleDevice)
-                {
-                    int i = 0;
-                    while (i < _devices.Count && _devices[i].IsAppleDevice) i++;
-                    _devices.Insert(i, dev);
-                }
-                else
-                {
-                    _devices.Add(dev);
-                }
+                _devices.Add(dev);
                 UpdateHeaderForCount();
             });
 
@@ -184,7 +179,7 @@ public partial class PairingWindow : Window
         RescanBtn .Visibility = Visibility.Collapsed;
 
         HeaderText.Text = $"Pair with “{d.Name}”";
-        SubText   .Text = $"{d.Address}:{d.Port}   ·   {d.Model ?? "Apple TV"}";
+        SubText   .Text = $"{d.AddressString}:{d.Port}   ·   {d.ModelFriendly}";
         PinPrompt .Text = "Enter the 4-digit PIN shown on your Apple TV:";
         PinBox.Password = string.Empty;
         PinBox.Focus();

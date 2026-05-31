@@ -30,9 +30,10 @@ public static class PairVerifyMessages
 {
     public const string PairingDataKey = "_pd";
     public const string AuthTypeKey    = "_auTy";
+    public const string XidKey         = "_x";
 
-    /// <summary>M1 outbound — fresh ECDH public.</summary>
-    public static byte[] BuildM1(byte[] clientX25519Public)
+    /// <summary>M1 outbound — fresh ECDH public. Includes _x so the TV doesn't drop us.</summary>
+    public static byte[] BuildM1(byte[] clientX25519Public, int xid)
     {
         var tlv = Tlv8.Write(new Dictionary<byte, byte[]>
         {
@@ -43,11 +44,12 @@ public static class PairVerifyMessages
         {
             { PairingDataKey, tlv },
             { AuthTypeKey,    4 },
+            { XidKey,         xid },
         });
     }
 
     /// <summary>M3 outbound — encrypted identifier + signature.</summary>
-    public static byte[] BuildM3(byte[] encryptedData)
+    public static byte[] BuildM3(byte[] encryptedData, int xid)
     {
         var tlv = Tlv8.Write(new Dictionary<byte, byte[]>
         {
@@ -55,7 +57,11 @@ public static class PairVerifyMessages
             { (byte)Tlv8Tag.EncryptedData, encryptedData },
         });
         // pyatv omits _auTy on M3; we match that.
-        return Opack.Pack(new Dictionary<string, object?> { { PairingDataKey, tlv } });
+        return Opack.Pack(new Dictionary<string, object?>
+        {
+            { PairingDataKey, tlv },
+            { XidKey,         xid },
+        });
     }
 
     public static Dictionary<byte, byte[]> ParsePairingData(byte[] opackEnvelope)
@@ -133,10 +139,13 @@ public sealed class CompanionPairVerify
             return PairVerifyMessages.ParsePairingData(payload);
         }
 
+        // pyatv adds an _x XID to every OPACK envelope; mirror that.
+        int xid = Random.Shared.Next(1, int.MaxValue);
+
         try
         {
             // ── M1 → ── ── M2 ← ──
-            await _conn.SendAsync(CompanionFrameType.PV_Start, PairVerifyMessages.BuildM1(clientPub), cancel)
+            await _conn.SendAsync(CompanionFrameType.PV_Start, PairVerifyMessages.BuildM1(clientPub, xid++), cancel)
                 .ConfigureAwait(false);
 
             var m2 = await AwaitReplyAsync().ConfigureAwait(false);
@@ -187,7 +196,7 @@ public sealed class CompanionPairVerify
                 { (byte)Tlv8Tag.Signature,  clientSignature },
             });
             var encryptedM3 = chacha.Encrypt(innerM3, Encoding.ASCII.GetBytes("PV-Msg03"));
-            await _conn.SendAsync(CompanionFrameType.PV_Next, PairVerifyMessages.BuildM3(encryptedM3), cancel)
+            await _conn.SendAsync(CompanionFrameType.PV_Next, PairVerifyMessages.BuildM3(encryptedM3, xid++), cancel)
                 .ConfigureAwait(false);
 
             // ── derive long-lived session keys + install ──
