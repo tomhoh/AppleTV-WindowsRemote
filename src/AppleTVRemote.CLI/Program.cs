@@ -187,7 +187,9 @@ static async Task<int> PairCommand(string[] args)
         DeviceId:    deviceIdStr,
         DisplayName: name ?? host,
         Credentials: creds,
-        PairedAtUtc: DateTime.UtcNow));
+        PairedAtUtc: DateTime.UtcNow,
+        Host:        host,
+        Port:        port));
 
     Console.WriteLine($"Paired! deviceId={deviceIdStr}");
     Console.WriteLine($"Credentials saved to {store.Root}");

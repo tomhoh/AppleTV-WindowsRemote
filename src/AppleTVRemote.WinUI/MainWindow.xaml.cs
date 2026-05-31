@@ -21,6 +21,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
 using Windows.UI;
+using Windows.UI.ViewManagement;   // UISettings — canonical system-theme source on Windows
 using WinUIEx;
 
 namespace AppleTVRemote.WinUI;
@@ -41,6 +42,8 @@ public sealed partial class MainWindow : WindowEx
     private Point _dragBaseline;
     private double _totalDragDistance;
     private HidCommand? _hoveredRegion;
+    private readonly UISettings _uiSettings = new();
+    private Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher;
 
     public MainWindow()
     {
@@ -50,15 +53,36 @@ public sealed partial class MainWindow : WindowEx
         ApplyTheme();
         RefreshDevices();
 
-        // Re-seed brushes when the system flips light/dark while we're open.
-        Root.ActualThemeChanged += (_, _) => ApplyTheme();
+        _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+
+        // UISettings.ColorValuesChanged is the canonical signal for the
+        // user toggling system light/dark — fires off the UI thread, so
+        // marshal back via the dispatcher.
+        _uiSettings.ColorValuesChanged += OnSystemColorsChanged;
 
         Activated += (_, args) =>
         {
             if (args.WindowActivationState == WindowActivationState.Deactivated)
+            {
                 this.Hide();
+            }
+            else
+            {
+                // Re-check theme on each show — handles the case where
+                // the user changed system theme while the popup was hidden.
+                ApplyTheme();
+            }
         };
-        Closed += async (_, _) => await TeardownActiveAsync();
+        Closed += async (_, _) =>
+        {
+            _uiSettings.ColorValuesChanged -= OnSystemColorsChanged;
+            await TeardownActiveAsync();
+        };
+    }
+
+    private void OnSystemColorsChanged(UISettings sender, object args)
+    {
+        _dispatcher?.TryEnqueue(ApplyTheme);
     }
 
     public void PositionNearTray() => TrayWindowPositioner.PositionNearCursor(this);
@@ -91,8 +115,7 @@ public sealed partial class MainWindow : WindowEx
 
     private void ApplyTheme()
     {
-        bool isDark = Root.ActualTheme == ElementTheme.Dark;
-        if (isDark)
+        if (IsSystemDark())
             ApplyDarkBrushes();
         else
             ApplyLightBrushes();
@@ -100,6 +123,20 @@ public sealed partial class MainWindow : WindowEx
         // the visual tree and re-paints brushes that were originally set
         // via StaticResource — WinUI's StaticResource bindings don't
         // re-resolve when the underlying dictionary entry is replaced.
+    }
+
+    /// <summary>
+    /// Canonical system-theme check on Windows. UISettings's Background
+    /// colour is the OS-active window background: black in dark mode,
+    /// white in light mode. This is what Microsoft's own apps use, and
+    /// is more reliable than ActualTheme on a Mica-backdrop window
+    /// (which doesn't always propagate the system theme into the
+    /// element-theme chain).
+    /// </summary>
+    private bool IsSystemDark()
+    {
+        var bg = _uiSettings.GetColorValue(UIColorType.Background);
+        return (bg.R + bg.G + bg.B) < 384;   // dark → near 0, light → near 765
     }
 
     private void ApplyLightBrushes()
@@ -307,8 +344,11 @@ public sealed partial class MainWindow : WindowEx
 
     private static PathFigure BuildQuadrantWedge(HidCommand cmd)
     {
-        double r = ClickpadDiameter / 2;
-        var center = new Point(r, r);
+        // Ring-shaped wedge — covers ONLY the outer quadrant, never bleeds
+        // into the area under the center select disc.
+        double rOuter = ClickpadDiameter      / 2;
+        double rInner = ClickpadInnerDiameter / 2;
+        var center = new Point(rOuter, rOuter);
         double startDeg = cmd switch
         {
             HidCommand.Right => -45,
@@ -318,15 +358,16 @@ public sealed partial class MainWindow : WindowEx
             _ => 0,
         };
         double endDeg = startDeg + 90;
-        Point ArcPoint(double deg)
+        Point Polar(double r, double deg)
         {
             var rad = deg * Math.PI / 180.0;
             return new Point(center.X + r * Math.Cos(rad), center.Y + r * Math.Sin(rad));
         }
-        var fig = new PathFigure { StartPoint = center, IsClosed = true };
-        fig.Segments.Add(new LineSegment { Point = ArcPoint(startDeg) });
-        fig.Segments.Add(new ArcSegment  { Point = ArcPoint(endDeg), Size = new Size(r, r), SweepDirection = SweepDirection.Clockwise });
-        fig.Segments.Add(new LineSegment { Point = center });
+        var fig = new PathFigure { StartPoint = Polar(rOuter, startDeg), IsClosed = true };
+        fig.Segments.Add(new ArcSegment  { Point = Polar(rOuter, endDeg),   Size = new Size(rOuter, rOuter), SweepDirection = SweepDirection.Clockwise });
+        fig.Segments.Add(new LineSegment { Point = Polar(rInner, endDeg) });
+        fig.Segments.Add(new ArcSegment  { Point = Polar(rInner, startDeg), Size = new Size(rInner, rInner), SweepDirection = SweepDirection.Counterclockwise });
+        fig.Segments.Add(new LineSegment { Point = Polar(rOuter, startDeg) });
         return fig;
     }
 
@@ -371,25 +412,63 @@ public sealed partial class MainWindow : WindowEx
         }
     }
 
+    // ─── Pairing entry point ───────────────────────────────────────
+
+    private async void OnOpenPairClicked(object sender, RoutedEventArgs e)
+    {
+        if (Content?.XamlRoot is null) return;
+        var dlg = new PairingDialog { XamlRoot = Content.XamlRoot };
+        var result = await dlg.ShowAsync();
+        if (result == ContentDialogResult.Primary && dlg.PairedCredentials is { } c)
+        {
+            RefreshDevices();
+            foreach (var item in DeviceCombo.Items)
+            {
+                if (item is StoredCredentials sc && sc.DeviceId == c.DeviceId)
+                {
+                    DeviceCombo.SelectedItem = item;
+                    break;
+                }
+            }
+        }
+    }
+
     // ─── Connection management ─────────────────────────────────────
 
     private async Task<CompanionSession?> EnsureSessionAsync()
     {
         if (DeviceCombo.SelectedItem is not StoredCredentials selected)
         {
-            await ShowMessageAsync(
-                "No paired Apple TV. Run:\n\n" +
-                "    atv discover\n    atv pair <host> <port>\n\n" +
-                "from the CLI, then reopen the popup.");
+            await ShowMessageAsync("No paired Apple TV. Click the + button to pair one.");
             return null;
         }
         if (_session is not null && _activeDevice?.DeviceId == selected.DeviceId)
             return _session;
         await TeardownActiveAsync();
-        await ShowMessageAsync(
-            "TODO: connect-time host/port input not implemented yet.\n" +
-            "For now, run `atv key <id> <host> <port> <button>` from the CLI.");
-        return null;
+
+        if (string.IsNullOrEmpty(selected.Host) || selected.Port <= 0)
+        {
+            await ShowMessageAsync(
+                "These credentials were created by an older build and don't include the device's host / port.\n" +
+                "Click the + button and re-pair this device to update the stored entry.");
+            return null;
+        }
+
+        try
+        {
+            var conn = new CompanionConnection(selected.Host, selected.Port);
+            await conn.ConnectAsync();
+            await new CompanionPairVerify(conn).RunAsync(selected.Credentials);
+            _conn          = conn;
+            _session       = new CompanionSession(conn);
+            _activeDevice  = selected;
+            return _session;
+        }
+        catch (Exception ex)
+        {
+            await ShowMessageAsync($"Failed to connect to {selected.Host}:{selected.Port} — {ex.Message}");
+            return null;
+        }
     }
 
     private async Task TeardownActiveAsync()

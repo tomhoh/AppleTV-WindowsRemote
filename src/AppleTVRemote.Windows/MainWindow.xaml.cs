@@ -41,12 +41,17 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
+        // Apply theme BEFORE Loaded so the very first paint is correct,
+        // not a flash of the light defaults.
+        ApplyTheme();
+
         Loaded += (_, _) =>
         {
-            ApplyTheme();
+            ApplyTheme();   // re-apply after the visual tree is realised
             RefreshDevices();
             SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         };
+        Activated += (_, _) => ApplyTheme();   // re-check whenever the popup re-opens
         Closed += async (_, _) =>
         {
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
@@ -80,7 +85,10 @@ public partial class MainWindow : Window
         {
             using var key = Registry.CurrentUser.OpenSubKey(
                 @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            if (key?.GetValue("AppsUseLightTheme") is int v) return v == 0;
+            // Prefer AppsUseLightTheme (per-app); fall back to
+            // SystemUsesLightTheme (taskbar) if the per-app key is missing.
+            if (key?.GetValue("AppsUseLightTheme")   is int a) return a == 0;
+            if (key?.GetValue("SystemUsesLightTheme") is int s) return s == 0;
         }
         catch { /* fall through */ }
         return false;
@@ -304,8 +312,15 @@ public partial class MainWindow : Window
 
     private static PathFigure BuildQuadrantWedge(HidCommand cmd)
     {
-        double r = ClickpadDiameter / 2;
-        var center = new Point(r, r);
+        // Ring-shaped wedge: covers the OUTER quadrant of the clickpad
+        // only, not the area under the center select button. Walks
+        //   outer-start → outer-end (clockwise arc on the outer circle)
+        //   outer-end   → inner-end (radial line)
+        //   inner-end   → inner-start (counter-clockwise arc on the inner)
+        //   inner-start → outer-start (radial line, closed)
+        double rOuter = ClickpadDiameter      / 2;
+        double rInner = ClickpadInnerDiameter / 2;
+        var center = new Point(rOuter, rOuter);
 
         double startDeg = cmd switch
         {
@@ -316,7 +331,7 @@ public partial class MainWindow : Window
             _ => 0,
         };
         double endDeg = startDeg + 90;
-        Point ArcPoint(double deg)
+        Point Polar(double r, double deg)
         {
             var rad = deg * Math.PI / 180.0;
             return new Point(center.X + r * Math.Cos(rad), center.Y + r * Math.Sin(rad));
@@ -324,12 +339,13 @@ public partial class MainWindow : Window
 
         return new PathFigure
         {
-            StartPoint = center,
+            StartPoint = Polar(rOuter, startDeg),
             Segments =
             {
-                new LineSegment(ArcPoint(startDeg), true),
-                new ArcSegment(ArcPoint(endDeg), new Size(r, r), 0, false, SweepDirection.Clockwise, true),
-                new LineSegment(center, true),
+                new ArcSegment(Polar(rOuter, endDeg),   new Size(rOuter, rOuter), 0, false, SweepDirection.Clockwise,        true),
+                new LineSegment(Polar(rInner, endDeg),  true),
+                new ArcSegment(Polar(rInner, startDeg), new Size(rInner, rInner), 0, false, SweepDirection.Counterclockwise, true),
+                new LineSegment(Polar(rOuter, startDeg), true),
             },
             IsClosed = true,
         };
@@ -375,16 +391,38 @@ public partial class MainWindow : Window
         }
     }
 
+    // ─── Pairing entry point ───────────────────────────────────────
+
+    private void OnOpenPairClicked(object sender, RoutedEventArgs e)
+    {
+        var dlg = new PairingWindow { Owner = this };
+        // The popup is Topmost; the pairing window needs to be on top of THAT.
+        dlg.Topmost = true;
+        if (dlg.ShowDialog() == true)
+        {
+            RefreshDevices();
+            // Pre-select the newly-paired device.
+            if (dlg.PairedCredentials is { } c)
+            {
+                foreach (var item in DeviceCombo.Items)
+                {
+                    if (item is StoredCredentials sc && sc.DeviceId == c.DeviceId)
+                    {
+                        DeviceCombo.SelectedItem = item;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     // ─── Connection management ─────────────────────────────────────
 
     private async Task<CompanionSession?> EnsureSessionAsync()
     {
         if (DeviceCombo.SelectedItem is not StoredCredentials selected)
         {
-            MessageBox.Show(
-                "No paired Apple TV. Run:\n\n" +
-                "    atv discover\n    atv pair <host> <port>\n\n" +
-                "from the CLI, then reopen the popup.");
+            MessageBox.Show("No paired Apple TV. Click the + button to pair one.");
             return null;
         }
 
@@ -393,10 +431,30 @@ public partial class MainWindow : Window
 
         await TeardownActiveAsync();
 
-        MessageBox.Show(
-            "TODO: connect-time host/port input not implemented yet.\n" +
-            "For now, run `atv key <id> <host> <port> <button>` from the CLI.");
-        return null;
+        if (string.IsNullOrEmpty(selected.Host) || selected.Port <= 0)
+        {
+            MessageBox.Show(
+                "These credentials were created by an older build and don't include the device's host / port.\n" +
+                "Click the + button and re-pair this device to update the stored entry.");
+            return null;
+        }
+
+        try
+        {
+            var conn = new CompanionConnection(selected.Host, selected.Port);
+            await conn.ConnectAsync();
+            await new CompanionPairVerify(conn).RunAsync(selected.Credentials);
+            _conn          = conn;
+            _session       = new CompanionSession(conn);
+            _activeDevice  = selected;
+            return _session;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Failed to connect to {selected.Host}:{selected.Port} — {ex.Message}",
+                "Apple TV Remote", MessageBoxButton.OK, MessageBoxImage.Error);
+            return null;
+        }
     }
 
     private async Task TeardownActiveAsync()

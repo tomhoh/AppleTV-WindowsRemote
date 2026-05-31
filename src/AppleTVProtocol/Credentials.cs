@@ -38,13 +38,20 @@ public sealed record HapCredentials(
 
 /// <summary>
 /// A <see cref="HapCredentials"/> bundled with the metadata we need to
-/// reconnect later (the device id and a friendly display name).
+/// reconnect later (device id, friendly name, and the host + port we
+/// paired against — so the UI can reconnect without re-prompting).
+///
+/// <c>Host</c> and <c>Port</c> default to the empty-string / 0 so
+/// credential files written by earlier versions keep loading; callers
+/// that need them should fall back to a re-discovery in that case.
 /// </summary>
 public sealed record StoredCredentials(
     string DeviceId,
     string DisplayName,
     HapCredentials Credentials,
-    DateTime PairedAtUtc);
+    DateTime PairedAtUtc,
+    string Host = "",
+    int Port = 0);
 
 /// <summary>
 /// JSON-backed credential store. Defaults to
@@ -134,7 +141,9 @@ public sealed class CredentialStore
             Convert.ToHexString(creds.Credentials.ClientPrivateKey).ToLowerInvariant(),
             Convert.ToHexString(creds.Credentials.AtvIdentifier).ToLowerInvariant(),
             Convert.ToHexString(creds.Credentials.ClientIdentifier).ToLowerInvariant(),
-            creds.PairedAtUtc.ToString("O"));
+            creds.PairedAtUtc.ToString("O"),
+            creds.Host,
+            creds.Port);
         return JsonSerializer.SerializeToUtf8Bytes(dto, _jsonOpts);
     }
 
@@ -150,7 +159,9 @@ public sealed class CredentialStore
                 Convert.FromHexString(dto.ClientPrivateKey),
                 Convert.FromHexString(dto.AtvIdentifier),
                 Convert.FromHexString(dto.ClientIdentifier)),
-            DateTime.Parse(dto.PairedAtUtc, null, System.Globalization.DateTimeStyles.RoundtripKind));
+            DateTime.Parse(dto.PairedAtUtc, null, System.Globalization.DateTimeStyles.RoundtripKind),
+            dto.Host ?? string.Empty,
+            dto.Port);
     }
 
     internal sealed record CredentialDto(
@@ -160,5 +171,7 @@ public sealed class CredentialStore
         string ClientPrivateKey,
         string AtvIdentifier,
         string ClientIdentifier,
-        string PairedAtUtc);
+        string PairedAtUtc,
+        string? Host = null,
+        int    Port  = 0);
 }

@@ -81,12 +81,21 @@
                 ToolTipService.ToolTip="Wake"
                 Click="OnPowerClicked" />
 
-        <ComboBox x:Name="DeviceCombo"
-                  Visibility="Collapsed"
-                  Width="120"
-                  HorizontalAlignment="Center"
-                  VerticalAlignment="Top"
-                  Margin="0,10,0,0" />
+        <StackPanel Orientation="Horizontal"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Top"
+                    Margin="0,10,0,0"
+                    Spacing="6">
+            <ComboBox x:Name="DeviceCombo"
+                      Width="100"
+                      Visibility="Collapsed" />
+            <Button x:Name="OpenPairBtn"
+                    Style="{StaticResource CircleButton}"
+                    Content="&#xE710;"
+                    FontFamily="Segoe MDL2 Assets"
+                    ToolTipService.ToolTip="Pair a new Apple TV"
+                    Click="OnOpenPairClicked" />
+        </StackPanel>
 
         <StackPanel Margin="0,42,0,0" HorizontalAlignment="Center" Spacing="12">
 
