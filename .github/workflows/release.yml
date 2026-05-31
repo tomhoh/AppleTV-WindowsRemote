@@ -108,9 +108,18 @@ jobs:
         id: sdk
         shell: pwsh
         run: |
-          $kits = "$env:ProgramFiles(x86)\Windows Kits\10\bin"
+          # PowerShell needs ${env:NAME} for env-var names that contain
+          # special chars like "(x86)" — $env:ProgramFiles(x86) parses
+          # as "$env:ProgramFiles" + "(x86)" and loses the space.
+          $kits = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          if (-not (Test-Path $kits)) {
+            # Fallback to %ProgramFiles%\Windows Kits\10\bin (some runner images use this)
+            $kits = "${env:ProgramFiles}\Windows Kits\10\bin"
+          }
+          if (-not (Test-Path $kits)) { throw "Windows SDK bin not found in either ProgramFiles location" }
+          Write-Host "Scanning $kits for MakeAppx/signtool …"
           $binDir = Get-ChildItem $kits -Directory `
-                    | Where-Object { Test-Path (Join-Path $_.FullName 'x64/makeappx.exe') } `
+                    | Where-Object { Test-Path (Join-Path $_.FullName 'x64\makeappx.exe') } `
                     | Sort-Object Name -Descending `
                     | Select-Object -First 1 `
                     | ForEach-Object { Join-Path $_.FullName 'x64' }
