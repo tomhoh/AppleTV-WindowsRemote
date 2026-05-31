@@ -1,19 +1,11 @@
 // SPDX-License-Identifier: MIT
 //
-// Mac-style Apple-TV remote popup.
+// Mac-style Apple-TV remote popup (WPF).
 //
-// Visual layout (matches the SwiftUI MenuBarRemote sibling):
-//   - 200x380 rounded body with aluminum gradient + soft top highlight
-//   - Round 130pt clickpad with center select disc
-//   - 5 click regions (top/bottom/left/right + center) detected via
-//     mouse coords; drag-to-swipe routes to arrow commands too
-//   - Pill button row: Menu / Home / Siri
-//   - Bottom row: PlayPause + tall volume pill (top half = +, bottom = −)
-//   - Power button in the top-right
-//
-// Connection lifecycle: lazy pair-verify on first click against the
-// currently-selected stored device. Failures tear the session down so
-// the next click reconnects clean.
+// All theme-sensitive brushes are seeded as light-mode defaults in XAML
+// and re-applied at runtime by ApplyTheme() — wired to live
+// SystemEvents.UserPreferenceChanged so toggling Windows light/dark
+// updates the popup instantly without a restart.
 
 using System;
 using System.Threading.Tasks;
@@ -21,7 +13,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using AppleTVProtocol;
+using Microsoft.Win32;
 
 namespace AppleTVRemote.Windows;
 
@@ -38,72 +32,140 @@ public partial class MainWindow : Window
     private const double SwipeThresholdPx      = 24;
     private const double TapMaxTotalPx         = 8;
 
-    // Drag-to-swipe state.
     private bool _dragActive;
     private Point _dragBaseline;
     private double _totalDragDistance;
+    private HidCommand? _hoveredRegion;
 
     public MainWindow()
     {
         InitializeComponent();
+
         Loaded += (_, _) =>
         {
             ApplyTheme();
             RefreshDevices();
+            SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         };
-        Closed += async (_, _) => await TeardownActiveAsync();
+        Closed += async (_, _) =>
+        {
+            SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+            await TeardownActiveAsync();
+        };
     }
 
     // ─── Tray-anchored popup behaviour ─────────────────────────────
 
-    /// <summary>
-    /// Called by App.OnTrayLeftClicked just before Show() — moves us
-    /// next to the cursor (i.e. next to the tray icon).
-    /// </summary>
     public void PositionNearTray() => TrayWindowPositioner.PositionNearCursor(this);
 
-    /// <summary>
-    /// macOS popovers dismiss when they lose focus. Do the same on
-    /// Windows so the tray UX feels native.
-    /// </summary>
+    /// <summary>Click-outside dismissal: same UX as a macOS menu-bar popover.</summary>
     private void OnDeactivated(object? sender, EventArgs e) => Hide();
+
+    private void OnCloseClicked(object sender, RoutedEventArgs e) => Hide();
 
     // ─── Theme adaptation ──────────────────────────────────────────
 
-    private void ApplyTheme()
+    private void OnUserPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)
     {
-        // Windows 10/11 dark-mode hint via AppsUseLightTheme (0 = dark).
-        bool isDark = false;
+        // The General category fires when Apps light/dark mode flips.
+        if (e.Category == UserPreferenceCategory.General)
+        {
+            Dispatcher.Invoke(ApplyTheme);
+        }
+    }
+
+    private static bool IsSystemDark()
+    {
         try
         {
-            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            using var key = Registry.CurrentUser.OpenSubKey(
                 @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            if (key?.GetValue("AppsUseLightTheme") is int v) isDark = v == 0;
+            if (key?.GetValue("AppsUseLightTheme") is int v) return v == 0;
         }
-        catch { /* ignore — stay on light */ }
+        catch { /* fall through */ }
+        return false;
+    }
 
-        if (!isDark) return;
+    private void ApplyTheme()
+    {
+        if (IsSystemDark())
+            ApplyDarkBrushes();
+        else
+            ApplyLightBrushes();
+    }
 
-        // Swap to a dark aluminum gradient.
-        var darkBody = new LinearGradientBrush(
-            new GradientStopCollection
-            {
-                new GradientStop(Color.FromRgb(0x52, 0x52, 0x52), 0),
-                new GradientStop(Color.FromRgb(0x2E, 0x2E, 0x2E), 1),
-            },
+    /// <summary>
+    /// Light-mode palette. Buttons use semi-transparent BLACK over the
+    /// aluminum gradient — that's where the readable contrast comes
+    /// from. White-on-aluminum reads too washed out.
+    /// </summary>
+    private void ApplyLightBrushes()
+    {
+        Resources["BodyGradient"]      = MakeVerticalGradient("#D6D6D6", "#A8A8A8");
+        Resources["BodyHighlight"]     = MakeTopHighlight("#59FFFFFF", "#00FFFFFF");
+
+        Resources["ButtonMaterial"]    = Solid("#33000000");
+        Resources["ButtonMaterialHv"]  = Solid("#52000000");
+        Resources["ButtonMaterialDn"]  = Solid("#72000000");
+        Resources["ButtonGlyph"]       = Solid("#E6000000");
+        Resources["ButtonStroke"]      = Solid("#40000000");
+
+        Resources["ClickpadRing"]      = Solid("#26000000");
+        Resources["ClickpadHover"]     = Solid("#1E000000");
+        Resources["ClickpadPressed"]   = Solid("#33000000");
+        Resources["SelectFill"]        = Solid("#80FFFFFF");
+        Resources["SelectHoverFill"]   = Solid("#AAFFFFFF");
+    }
+
+    /// <summary>
+    /// Dark-mode palette. Body goes deep aluminum; button materials
+    /// flip to semi-transparent WHITE so they read against the dark.
+    /// </summary>
+    private void ApplyDarkBrushes()
+    {
+        Resources["BodyGradient"]      = MakeVerticalGradient("#525252", "#2E2E2E");
+        Resources["BodyHighlight"]     = MakeTopHighlight("#1AFFFFFF", "#00FFFFFF");
+
+        Resources["ButtonMaterial"]    = Solid("#26FFFFFF");
+        Resources["ButtonMaterialHv"]  = Solid("#40FFFFFF");
+        Resources["ButtonMaterialDn"]  = Solid("#5CFFFFFF");
+        Resources["ButtonGlyph"]       = Solid("#E6FFFFFF");
+        Resources["ButtonStroke"]      = Solid("#33FFFFFF");
+
+        Resources["ClickpadRing"]      = Solid("#1AFFFFFF");
+        Resources["ClickpadHover"]     = Solid("#1AFFFFFF");
+        Resources["ClickpadPressed"]   = Solid("#33FFFFFF");
+        Resources["SelectFill"]        = Solid("#66FFFFFF");
+        Resources["SelectHoverFill"]   = Solid("#80FFFFFF");
+    }
+
+    private static SolidColorBrush Solid(string hex)
+    {
+        var c = (Color)ColorConverter.ConvertFromString(hex)!;
+        var b = new SolidColorBrush(c);
+        b.Freeze();
+        return b;
+    }
+
+    private static LinearGradientBrush MakeVerticalGradient(string topHex, string bottomHex)
+    {
+        var b = new LinearGradientBrush(
+            (Color)ColorConverter.ConvertFromString(topHex)!,
+            (Color)ColorConverter.ConvertFromString(bottomHex)!,
             new Point(0, 0), new Point(0, 1));
-        var darkHighlight = new LinearGradientBrush(
-            new GradientStopCollection
-            {
-                new GradientStop(Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF), 0),
-                new GradientStop(Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), 1),
-            },
-            new Point(0, 0), new Point(0, 0.5));
-        Resources["BodyGradient"]   = darkBody;
-        Resources["BodyHighlight"]  = darkHighlight;
-        Resources["ButtonGlyph"]    = new SolidColorBrush(Color.FromArgb(0xE6, 0xFF, 0xFF, 0xFF));
-        Resources["ClickpadRing"]   = new SolidColorBrush(Color.FromArgb(0x2A, 0xFF, 0xFF, 0xFF));
-        Resources["ButtonStroke"]   = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
+        b.Freeze();
+        return b;
+    }
+
+    private static LinearGradientBrush MakeTopHighlight(string topHex, string fadeHex)
+    {
+        var b = new LinearGradientBrush(new GradientStopCollection
+        {
+            new GradientStop((Color)ColorConverter.ConvertFromString(topHex)!,   0.0),
+            new GradientStop((Color)ColorConverter.ConvertFromString(fadeHex)!, 1.0),
+        }, new Point(0, 0), new Point(0, 0.5));
+        b.Freeze();
+        return b;
     }
 
     private void RefreshDevices()
@@ -131,21 +193,39 @@ public partial class MainWindow : Window
 
     private void OnClickpadMove(object sender, MouseEventArgs e)
     {
-        if (!_dragActive) return;
         var p = e.GetPosition(Clickpad);
-        var dx = p.X - _dragBaseline.X;
-        var dy = p.Y - _dragBaseline.Y;
-        _totalDragDistance = Math.Max(_totalDragDistance, Math.Sqrt(dx * dx + dy * dy));
-        if (Math.Max(Math.Abs(dx), Math.Abs(dy)) < SwipeThresholdPx) return;
 
-        HidCommand cmd = (Math.Abs(dx) >= Math.Abs(dy))
-            ? (dx > 0 ? HidCommand.Right : HidCommand.Left)
-            : (dy > 0 ? HidCommand.Down  : HidCommand.Up);
-        _ = DispatchAsync(cmd);
-        FlashQuadrant(cmd);
+        if (_dragActive)
+        {
+            var dx = p.X - _dragBaseline.X;
+            var dy = p.Y - _dragBaseline.Y;
+            _totalDragDistance = Math.Max(_totalDragDistance, Math.Sqrt(dx * dx + dy * dy));
+            if (Math.Max(Math.Abs(dx), Math.Abs(dy)) < SwipeThresholdPx) return;
 
-        // Reset baseline so each SwipeThreshold px fires once.
-        _dragBaseline = p;
+            HidCommand cmd = (Math.Abs(dx) >= Math.Abs(dy))
+                ? (dx > 0 ? HidCommand.Right : HidCommand.Left)
+                : (dy > 0 ? HidCommand.Down  : HidCommand.Up);
+            _ = DispatchAsync(cmd);
+            FlashQuadrant(cmd);
+
+            _dragBaseline = p;
+            return;
+        }
+
+        // Not dragging — update hover highlight.
+        var region = HitRegion(p);
+        if (region != _hoveredRegion)
+        {
+            _hoveredRegion = region;
+            ApplyHoverRegion(region);
+        }
+    }
+
+    private void OnClickpadLeave(object sender, MouseEventArgs e)
+    {
+        if (_dragActive) return;
+        _hoveredRegion = null;
+        ApplyHoverRegion(null);
     }
 
     private void OnClickpadUp(object sender, MouseButtonEventArgs e)
@@ -161,6 +241,26 @@ public partial class MainWindow : Window
             _ = DispatchAsync(cmd);
             FlashQuadrant(cmd);
         }
+    }
+
+    private void ApplyHoverRegion(HidCommand? region)
+    {
+        // Center select disc: swap fill on hover for the soft highlight.
+        SelectDisc.Fill = (region == HidCommand.Select)
+            ? (Brush)Resources["SelectHoverFill"]
+            : (Brush)Resources["SelectFill"];
+
+        // Outer ring: draw a wedge for the hovered quadrant.
+        if (region is null or HidCommand.Select)
+        {
+            HoverQuadrant.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var geo = new PathGeometry { Figures = { BuildQuadrantWedge(region.Value) } };
+        HoverQuadrant.Data = geo;
+        HoverQuadrant.Opacity = 1.0;
+        HoverQuadrant.BeginAnimation(UIElement.OpacityProperty, null);   // cancel any fade
+        HoverQuadrant.Visibility = Visibility.Visible;
     }
 
     private static HidCommand HitRegion(Point p)
@@ -180,23 +280,21 @@ public partial class MainWindow : Window
     {
         if (cmd == HidCommand.Select)
         {
-            // Pulse the center disc.
             var scale = (ScaleTransform)SelectDisc.RenderTransform;
-            var anim = new System.Windows.Media.Animation.DoubleAnimation
+            var anim = new DoubleAnimation
             {
                 From = 0.94, To = 1.0, Duration = TimeSpan.FromMilliseconds(180),
-                EasingFunction = new System.Windows.Media.Animation.QuadraticEase(),
+                EasingFunction = new QuadraticEase(),
             };
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, anim);
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, anim);
             return;
         }
 
-        // Build a wedge for the quadrant and fade it.
         var geo = new PathGeometry { Figures = { BuildQuadrantWedge(cmd) } };
         QuadrantHighlight.Data = geo;
         QuadrantHighlight.Visibility = Visibility.Visible;
-        var fade = new System.Windows.Media.Animation.DoubleAnimation
+        var fade = new DoubleAnimation
         {
             From = 1.0, To = 0.0, Duration = TimeSpan.FromMilliseconds(220),
         };
@@ -242,9 +340,6 @@ public partial class MainWindow : Window
     private async void OnHidClicked(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not string tag) return;
-
-        // The "Siri" pill maps to a hold-Siri gesture in pyatv (HID code Siri=10);
-        // here we treat it as a tap that toggles dictation.
         if (!Enum.TryParse<HidCommand>(tag, out var cmd))
         {
             MessageBox.Show($"unknown HID command: {tag}");
@@ -254,12 +349,7 @@ public partial class MainWindow : Window
     }
 
     private async void OnPowerClicked(object sender, RoutedEventArgs e)
-    {
-        // Pyatv doesn't expose a unique "Power" — Wake/Sleep are the
-        // closest moral equivalents. Tap = Wake; long-press would be
-        // Sleep but we keep it simple here.
-        await DispatchAsync(HidCommand.Wake);
-    }
+        => await DispatchAsync(HidCommand.Wake);
 
     private async void OnVolumeClicked(object sender, MouseButtonEventArgs e)
     {
@@ -303,9 +393,6 @@ public partial class MainWindow : Window
 
         await TeardownActiveAsync();
 
-        // TODO(Phase 7 iteration): persist host/port alongside credentials
-        // and read them here. For now, MainWindow can't connect by itself —
-        // the CLI is the canonical pair-flow entry point.
         MessageBox.Show(
             "TODO: connect-time host/port input not implemented yet.\n" +
             "For now, run `atv key <id> <host> <port> <button>` from the CLI.");

@@ -10,33 +10,48 @@
     IsMaximizable="False"
     IsResizable="False">
 
+    <!--
+      Title bar / chrome is removed in code-behind via an OverlappedPresenter
+      configured borderless. The custom "close X" button in the top-left of
+      the remote replaces the standard window-control buttons.
+
+      All theme-sensitive brushes live in the Grid.Resources below and get
+      re-seeded by MainWindow.ApplyTheme() when ActualThemeChanged fires
+      (which the framework raises when the system theme flips).
+    -->
+
     <winuiex:WindowEx.SystemBackdrop>
         <MicaBackdrop Kind="BaseAlt" />
     </winuiex:WindowEx.SystemBackdrop>
 
-    <Grid>
+    <Grid x:Name="Root" RequestedTheme="Default">
         <Grid.Resources>
-            <!-- Glassy button material — adapts naturally to the Mica backdrop. -->
-            <SolidColorBrush x:Key="ButtonMaterial" Color="#33FFFFFF" />
-            <SolidColorBrush x:Key="ButtonStroke"   Color="#33FFFFFF" />
-            <SolidColorBrush x:Key="ClickpadRing"   Color="#3FFFFFFF" />
+            <SolidColorBrush x:Key="ButtonMaterial"   Color="#33FFFFFF" />
+            <SolidColorBrush x:Key="ButtonMaterialHv" Color="#55FFFFFF" />
+            <SolidColorBrush x:Key="ButtonMaterialDn" Color="#80FFFFFF" />
+            <SolidColorBrush x:Key="ButtonGlyph"      Color="#E6FFFFFF" />
+            <SolidColorBrush x:Key="ButtonStroke"     Color="#33FFFFFF" />
+            <SolidColorBrush x:Key="ClickpadRing"     Color="#33FFFFFF" />
+            <SolidColorBrush x:Key="ClickpadHover"    Color="#1AFFFFFF" />
+            <SolidColorBrush x:Key="ClickpadPressed"  Color="#33FFFFFF" />
+            <SolidColorBrush x:Key="SelectFill"       Color="#80FFFFFF" />
+            <SolidColorBrush x:Key="SelectHoverFill"  Color="#A6FFFFFF" />
 
-            <!-- Pill button (Menu / Home / Siri / PlayPause). -->
             <Style x:Key="PillButton" TargetType="Button">
-                <Setter Property="Width"  Value="44" />
-                <Setter Property="Height" Value="44" />
-                <Setter Property="Background"   Value="{StaticResource ButtonMaterial}" />
-                <Setter Property="BorderBrush"  Value="{StaticResource ButtonStroke}" />
+                <Setter Property="Foreground" Value="{StaticResource ButtonGlyph}" />
+                <Setter Property="Background" Value="{StaticResource ButtonMaterial}" />
+                <Setter Property="BorderBrush" Value="{StaticResource ButtonStroke}" />
                 <Setter Property="BorderThickness" Value="0.5" />
                 <Setter Property="CornerRadius"    Value="22" />
-                <Setter Property="FontSize"   Value="16" />
-                <Setter Property="Padding"    Value="0" />
+                <Setter Property="Width"  Value="44" />
+                <Setter Property="Height" Value="44" />
+                <Setter Property="FontSize" Value="16" />
+                <Setter Property="Padding" Value="0" />
                 <Setter Property="HorizontalContentAlignment" Value="Center" />
                 <Setter Property="VerticalContentAlignment"   Value="Center" />
             </Style>
 
-            <!-- Power button — small circular button in top-right. -->
-            <Style x:Key="PowerButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
+            <Style x:Key="CircleButton" TargetType="Button" BasedOn="{StaticResource PillButton}">
                 <Setter Property="Width"  Value="22" />
                 <Setter Property="Height" Value="22" />
                 <Setter Property="CornerRadius" Value="11" />
@@ -44,46 +59,64 @@
             </Style>
         </Grid.Resources>
 
-        <!-- Top-right power -->
+        <!-- Top-left: close X -->
+        <Button x:Name="CloseBtn"
+                Style="{StaticResource CircleButton}"
+                Content="&#xE8BB;"
+                FontFamily="Segoe MDL2 Assets"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Margin="12,10,0,0"
+                ToolTipService.ToolTip="Close"
+                Click="OnCloseClicked" />
+
+        <!-- Top-right: power -->
         <Button x:Name="PowerBtn"
-                Style="{StaticResource PowerButton}"
+                Style="{StaticResource CircleButton}"
                 Content="&#xE7E8;"
                 FontFamily="Segoe MDL2 Assets"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Top"
                 Margin="0,10,12,0"
+                ToolTipService.ToolTip="Wake"
                 Click="OnPowerClicked" />
 
-        <!-- Device picker (hidden until we have credentials). -->
         <ComboBox x:Name="DeviceCombo"
                   Visibility="Collapsed"
-                  Width="140"
-                  HorizontalAlignment="Left"
+                  Width="120"
+                  HorizontalAlignment="Center"
                   VerticalAlignment="Top"
-                  Margin="12,10,0,0" />
+                  Margin="0,10,0,0" />
 
-        <StackPanel Margin="0,32,0,0" HorizontalAlignment="Center" Spacing="12">
+        <StackPanel Margin="0,42,0,0" HorizontalAlignment="Center" Spacing="12">
 
-            <!-- Clickpad -->
             <Grid x:Name="Clickpad"
                   Width="130" Height="130"
                   Margin="0,8,0,4"
                   Background="Transparent"
                   PointerPressed="OnClickpadPointerPressed"
                   PointerMoved="OnClickpadPointerMoved"
-                  PointerReleased="OnClickpadPointerReleased">
+                  PointerReleased="OnClickpadPointerReleased"
+                  PointerExited="OnClickpadPointerExited">
 
-                <Ellipse Fill="{StaticResource ClickpadRing}" Stroke="#33FFFFFF" StrokeThickness="0.5" />
+                <Ellipse Fill="{StaticResource ClickpadRing}"
+                         Stroke="{StaticResource ButtonStroke}"
+                         StrokeThickness="0.5" />
+
+                <Path x:Name="HoverQuadrant"
+                      Fill="{StaticResource ClickpadHover}"
+                      IsHitTestVisible="False"
+                      Visibility="Collapsed" />
 
                 <Path x:Name="QuadrantHighlight"
-                      Fill="#3CFFFFFF"
+                      Fill="{StaticResource ClickpadPressed}"
                       IsHitTestVisible="False"
                       Visibility="Collapsed" />
 
                 <Ellipse x:Name="SelectDisc"
                          Width="72" Height="72"
-                         Fill="#A6FFFFFF"
-                         Stroke="#33FFFFFF"
+                         Fill="{StaticResource SelectFill}"
+                         Stroke="{StaticResource ButtonStroke}"
                          StrokeThickness="0.5"
                          HorizontalAlignment="Center"
                          VerticalAlignment="Center"
@@ -94,7 +127,6 @@
                 </Ellipse>
             </Grid>
 
-            <!-- Row 1: Menu / Home / Siri -->
             <Grid Margin="8,0,8,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition />
@@ -112,7 +144,6 @@
                         Tag="Siri"  Click="OnHidClicked" />
             </Grid>
 
-            <!-- Row 2: PlayPause + tall volume pill -->
             <Grid Margin="8,0,8,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition />
@@ -125,6 +156,7 @@
                         Click="OnHidClicked" />
 
                 <Border Grid.Column="1"
+                        x:Name="VolumeRocker"
                         Width="44" Height="92"
                         HorizontalAlignment="Right"
                         CornerRadius="22"
@@ -139,16 +171,20 @@
                             <RowDefinition />
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0"
+                                   x:Name="VolUpGlyph"
                                    FontFamily="Segoe MDL2 Assets"
                                    FontSize="11"
+                                   Foreground="{StaticResource ButtonGlyph}"
                                    Text="&#xE995;"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center"
                                    IsHitTestVisible="False" />
-                        <Rectangle Grid.Row="1" Fill="#33000000" />
+                        <Rectangle Grid.Row="1" Fill="{StaticResource ButtonStroke}" />
                         <TextBlock Grid.Row="2"
+                                   x:Name="VolDownGlyph"
                                    FontFamily="Segoe MDL2 Assets"
                                    FontSize="11"
+                                   Foreground="{StaticResource ButtonGlyph}"
                                    Text="&#xE993;"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center"

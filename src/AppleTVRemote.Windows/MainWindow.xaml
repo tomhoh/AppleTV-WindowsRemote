@@ -12,18 +12,14 @@
         Background="Transparent"
         Deactivated="OnDeactivated">
     <!--
-      Look mirrors the macOS MenuBarRemote popover:
-        - 165pt body, aluminum vertical gradient + soft top highlight
-        - Rounded outer corners (the popover IS the remote)
-        - 130pt round clickpad with a 72pt center select disc
-        - Compact button row: Menu / Home / mic
-        - Bottom row: PlayPause + tall volume pill
-      Light/dark variants of the body gradient are picked at runtime by
-      reading the system theme (see MainWindow.xaml.cs).
+      All theme-sensitive brushes are seeded as light-mode defaults here
+      and re-applied at runtime by MainWindow.ApplyTheme(). They use
+      DynamicResource bindings so the swap is live (system theme change
+      via SystemEvents.UserPreferenceChanged triggers a re-apply).
     -->
 
     <Window.Resources>
-        <!-- Body gradient (light default; overridden in code-behind for dark). -->
+        <!-- BODY (changes with theme) -->
         <LinearGradientBrush x:Key="BodyGradient" StartPoint="0,0" EndPoint="0,1">
             <GradientStop Offset="0" Color="#D6D6D6" />
             <GradientStop Offset="1" Color="#A8A8A8" />
@@ -33,18 +29,24 @@
             <GradientStop Offset="1" Color="#00FFFFFF" />
         </LinearGradientBrush>
 
-        <!-- Glassy "material" backing for the round buttons + select disc. -->
-        <SolidColorBrush x:Key="ButtonMaterial" Color="#33FFFFFF" />
-        <SolidColorBrush x:Key="ButtonGlyph"    Color="#C7000000" />
-        <SolidColorBrush x:Key="ButtonStroke"   Color="#26000000" />
-        <SolidColorBrush x:Key="ClickpadRing"   Color="#3FFFFFFF" />
+        <!-- BUTTONS (changes with theme — light mode uses darker glass for contrast) -->
+        <SolidColorBrush x:Key="ButtonMaterial"   Color="#33000000" />
+        <SolidColorBrush x:Key="ButtonMaterialHv" Color="#52000000" />
+        <SolidColorBrush x:Key="ButtonMaterialDn" Color="#72000000" />
+        <SolidColorBrush x:Key="ButtonGlyph"      Color="#E6000000" />
+        <SolidColorBrush x:Key="ButtonStroke"     Color="#33000000" />
 
-        <!-- Pill button (Menu / Home / mic / PlayPause).
-             Press-feedback is colour-driven; we skip the SwiftUI-style
-             scale animation because nested transform targets in WPF
-             template triggers are awkward to reach by name. -->
+        <!-- CLICKPAD (changes with theme) -->
+        <SolidColorBrush x:Key="ClickpadRing"     Color="#33000000" />
+        <SolidColorBrush x:Key="ClickpadHover"    Color="#1E000000" />
+        <SolidColorBrush x:Key="ClickpadPressed"  Color="#33000000" />
+        <SolidColorBrush x:Key="SelectFill"       Color="#80FFFFFF" />
+        <SolidColorBrush x:Key="SelectHoverFill"  Color="#A6FFFFFF" />
+
+        <!-- Pill button. Press feedback is colour-driven; hover gets a
+             slightly lighter glass to give the mouse-over signal. -->
         <Style x:Key="PillButton" TargetType="Button">
-            <Setter Property="Foreground" Value="{StaticResource ButtonGlyph}" />
+            <Setter Property="Foreground" Value="{DynamicResource ButtonGlyph}" />
             <Setter Property="FontSize"   Value="16" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Width"      Value="44" />
@@ -56,8 +58,8 @@
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="Bg"
                                 CornerRadius="22"
-                                Background="{StaticResource ButtonMaterial}"
-                                BorderBrush="{StaticResource ButtonStroke}"
+                                Background="{DynamicResource ButtonMaterial}"
+                                BorderBrush="{DynamicResource ButtonStroke}"
                                 BorderThickness="0.5">
                             <ContentPresenter HorizontalAlignment="Center"
                                               VerticalAlignment="Center"
@@ -67,10 +69,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#55FFFFFF" />
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource ButtonMaterialHv}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#80FFFFFF" />
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource ButtonMaterialDn}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -78,9 +80,9 @@
             </Setter>
         </Style>
 
-        <!-- Power button — tiny circle in the top-right corner. -->
-        <Style x:Key="PowerButton" TargetType="Button">
-            <Setter Property="Foreground" Value="{StaticResource ButtonGlyph}" />
+        <!-- Small circular icon button — used for Close and Power. -->
+        <Style x:Key="CircleButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource ButtonGlyph}" />
             <Setter Property="FontSize" Value="10" />
             <Setter Property="Width"  Value="22" />
             <Setter Property="Height" Value="22" />
@@ -90,8 +92,8 @@
                     <ControlTemplate TargetType="Button">
                         <Grid>
                             <Ellipse x:Name="Bg"
-                                     Fill="{StaticResource ButtonMaterial}"
-                                     Stroke="{StaticResource ButtonStroke}"
+                                     Fill="{DynamicResource ButtonMaterial}"
+                                     Stroke="{DynamicResource ButtonStroke}"
                                      StrokeThickness="0.5" />
                             <ContentPresenter HorizontalAlignment="Center"
                                               VerticalAlignment="Center"
@@ -100,10 +102,10 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bg" Property="Fill" Value="#55FFFFFF" />
+                                <Setter TargetName="Bg" Property="Fill" Value="{DynamicResource ButtonMaterialHv}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bg" Property="Fill" Value="#80FFFFFF" />
+                                <Setter TargetName="Bg" Property="Fill" Value="{DynamicResource ButtonMaterialDn}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -112,7 +114,6 @@
         </Style>
     </Window.Resources>
 
-    <!-- Outer drop shadow + rounded body. -->
     <Border CornerRadius="22"
             Background="{DynamicResource BodyGradient}"
             BorderBrush="#33000000"
@@ -122,56 +123,72 @@
         </Border.Effect>
 
         <Grid>
-            <!-- Top body highlight (light reflection) -->
             <Rectangle Fill="{DynamicResource BodyHighlight}" RadiusX="22" RadiusY="22" />
 
-            <!-- Power button: top-right corner of the body -->
+            <!-- Top-left: close X -->
+            <Button x:Name="CloseBtn"
+                    Style="{StaticResource CircleButton}"
+                    Content="&#xE8BB;"
+                    FontFamily="Segoe MDL2 Assets"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    Margin="12,10,0,0"
+                    ToolTip="Close"
+                    Click="OnCloseClicked" />
+
+            <!-- Top-right: power -->
             <Button x:Name="PowerBtn"
-                    Style="{StaticResource PowerButton}"
+                    Style="{StaticResource CircleButton}"
                     Content="&#xE7E8;"
                     FontFamily="Segoe MDL2 Assets"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Top"
                     Margin="0,10,12,0"
+                    ToolTip="Wake"
                     Click="OnPowerClicked" />
 
-            <!-- Device picker (hidden by default; toggled by Cmd/Right-click area later). -->
+            <!-- Device picker (hidden until paired devices exist). -->
             <ComboBox x:Name="DeviceCombo"
                       Visibility="Collapsed"
-                      Width="140" HorizontalAlignment="Left"
-                      VerticalAlignment="Top" Margin="12,10,0,0" />
+                      Width="120" HorizontalAlignment="Center"
+                      VerticalAlignment="Top" Margin="0,10,0,0" />
 
-            <!-- Remote body: clickpad on top, then button rows -->
-            <StackPanel Margin="0,32,0,0" HorizontalAlignment="Center">
+            <StackPanel Margin="0,42,0,0" HorizontalAlignment="Center">
 
-                <!-- Clickpad: round outer ring + 5 invisible click regions + center disc -->
                 <Grid x:Name="Clickpad"
                       Width="130" Height="130"
                       Margin="0,8,0,16"
                       MouseLeftButtonDown="OnClickpadDown"
                       MouseMove="OnClickpadMove"
                       MouseLeftButtonUp="OnClickpadUp"
+                      MouseLeave="OnClickpadLeave"
                       Background="Transparent"
                       ClipToBounds="True">
 
-                    <!-- Outer ring -->
-                    <Ellipse Fill="{StaticResource ClickpadRing}"
-                             Stroke="#26000000"
+                    <!-- Outer ring + thin inset stroke -->
+                    <Ellipse Fill="{DynamicResource ClickpadRing}"
+                             Stroke="{DynamicResource ButtonStroke}"
                              StrokeThickness="0.5" />
 
-                    <!-- Pressed-quadrant overlay (driven from code-behind) -->
-                    <Path x:Name="QuadrantHighlight"
-                          Fill="#38FFFFFF"
+                    <!-- Hover quadrant overlay (subtle) -->
+                    <Path x:Name="HoverQuadrant"
+                          Fill="{DynamicResource ClickpadHover}"
                           IsHitTestVisible="False"
                           Visibility="Collapsed" />
 
-                    <!-- Center select disc -->
+                    <!-- Pressed quadrant flash (animates out) -->
+                    <Path x:Name="QuadrantHighlight"
+                          Fill="{DynamicResource ClickpadPressed}"
+                          IsHitTestVisible="False"
+                          Visibility="Collapsed" />
+
+                    <!-- Center select disc; fill flips on hover -->
                     <Ellipse x:Name="SelectDisc"
                              Width="72" Height="72"
                              HorizontalAlignment="Center"
                              VerticalAlignment="Center"
-                             Fill="#A6FFFFFF"
-                             Stroke="#26000000"
+                             Fill="{DynamicResource SelectFill}"
+                             Stroke="{DynamicResource ButtonStroke}"
                              StrokeThickness="0.5"
                              RenderTransformOrigin="0.5,0.5">
                         <Ellipse.RenderTransform>
@@ -180,62 +197,43 @@
                     </Ellipse>
                 </Grid>
 
-                <!-- Row 1: Menu / Home / Mic (Siri) -->
+                <!-- Row 1: Menu / Home / Siri -->
                 <Grid Margin="8,0,8,12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition />
                         <ColumnDefinition />
                         <ColumnDefinition />
                     </Grid.ColumnDefinitions>
-
-                    <Button Grid.Column="0"
-                            Style="{StaticResource PillButton}"
-                            FontFamily="Segoe MDL2 Assets"
-                            Content="&#xE76B;"
-                            Tag="Menu"
-                            ToolTip="Menu"
-                            Click="OnHidClicked" />
-
-                    <Button Grid.Column="1"
-                            Style="{StaticResource PillButton}"
-                            FontFamily="Segoe MDL2 Assets"
-                            Content="&#xE7F4;"
-                            Tag="Home"
-                            ToolTip="Home"
-                            Click="OnHidClicked" />
-
-                    <Button Grid.Column="2"
-                            Style="{StaticResource PillButton}"
-                            FontFamily="Segoe MDL2 Assets"
-                            Content="&#xE720;"
-                            Tag="Siri"
-                            ToolTip="Siri"
-                            Click="OnHidClicked" />
+                    <Button Grid.Column="0" Style="{StaticResource PillButton}"
+                            FontFamily="Segoe MDL2 Assets" Content="&#xE76B;"
+                            Tag="Menu"  ToolTip="Menu"      Click="OnHidClicked" />
+                    <Button Grid.Column="1" Style="{StaticResource PillButton}"
+                            FontFamily="Segoe MDL2 Assets" Content="&#xE7F4;"
+                            Tag="Home"  ToolTip="Home"      Click="OnHidClicked" />
+                    <Button Grid.Column="2" Style="{StaticResource PillButton}"
+                            FontFamily="Segoe MDL2 Assets" Content="&#xE720;"
+                            Tag="Siri"  ToolTip="Siri"      Click="OnHidClicked" />
                 </Grid>
 
-                <!-- Row 2: PlayPause (left) + Volume rocker (right) -->
+                <!-- Row 2: PlayPause + Volume rocker -->
                 <Grid Margin="8,0,8,12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition />
                         <ColumnDefinition />
                     </Grid.ColumnDefinitions>
-
-                    <Button Grid.Column="0"
-                            Style="{StaticResource PillButton}"
-                            FontFamily="Segoe MDL2 Assets"
-                            Content="&#xF5B0;"
-                            Tag="PlayPause"
-                            ToolTip="Play / Pause"
+                    <Button Grid.Column="0" Style="{StaticResource PillButton}"
+                            FontFamily="Segoe MDL2 Assets" Content="&#xF5B0;"
+                            Tag="PlayPause" ToolTip="Play / Pause"
                             HorizontalAlignment="Left"
                             Click="OnHidClicked" />
 
-                    <!-- Volume rocker: single 44x92 pill, top half = +, bottom = − -->
                     <Border Grid.Column="1"
+                            x:Name="VolumeRocker"
                             Width="44" Height="92"
                             HorizontalAlignment="Right"
                             CornerRadius="22"
-                            Background="{StaticResource ButtonMaterial}"
-                            BorderBrush="{StaticResource ButtonStroke}"
+                            Background="{DynamicResource ButtonMaterial}"
+                            BorderBrush="{DynamicResource ButtonStroke}"
                             BorderThickness="0.5"
                             MouseLeftButtonDown="OnVolumeClicked"
                             Cursor="Hand">
@@ -247,16 +245,16 @@
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0"
                                        FontFamily="Segoe MDL2 Assets"
-                                       Foreground="{StaticResource ButtonGlyph}"
+                                       Foreground="{DynamicResource ButtonGlyph}"
                                        FontSize="11"
                                        Text="&#xE995;"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center"
                                        IsHitTestVisible="False"/>
-                            <Rectangle Grid.Row="1" Fill="#1A000000" />
+                            <Rectangle Grid.Row="1" Fill="{DynamicResource ButtonStroke}" />
                             <TextBlock Grid.Row="2"
                                        FontFamily="Segoe MDL2 Assets"
-                                       Foreground="{StaticResource ButtonGlyph}"
+                                       Foreground="{DynamicResource ButtonGlyph}"
                                        FontSize="11"
                                        Text="&#xE993;"
                                        HorizontalAlignment="Center"
