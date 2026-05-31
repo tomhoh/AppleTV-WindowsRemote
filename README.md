@@ -5,15 +5,15 @@ no Python, no Electron, no Node. A port of the Apple TV Companion /
 MRP protocols (Apple's reverse-engineered remote-control protocols)
 to .NET, fronted by a WPF system-tray UI.
 
-> **Status: Phase 1 + 2 + 3 landed.** Full protocol stack from TCP up:
+> **Status: Phases 1 → 5a landed.** Full protocol stack from TCP up:
 > TLV8, OPACK, crypto primitives (HKDF-SHA512, ChaCha20-Poly1305,
 > SRP-6a, Ed25519, X25519), mDNS discovery, Companion frame transport,
-> HAP pair-setup + pair-verify, encrypted Companion session, and HID
-> commands. **164 tests passing** on Ubuntu + Windows CI. CLI supports
-> `atv discover`, `atv pair`, `atv list`, `atv unpair`, `atv key`.
-> Next: swipe/long-press (Phase 4), app launcher + text input (Phase 5),
-> Now Playing (Phase 6), then the WPF tray UI (Phase 7). See
-> [PLAN.md](PLAN.md) for the full roadmap.
+> HAP pair-setup + pair-verify, encrypted Companion session, HID
+> commands, touchpad swipe, and app launcher. **171 tests passing** on
+> Ubuntu + Windows CI. CLI: `atv discover`, `atv pair`, `atv list`,
+> `atv unpair`, `atv key`, `atv swipe`, `atv apps`, `atv launch`. Next:
+> Remote Text Input (5b), Now Playing (Phase 6), then the WPF tray UI
+> (Phase 7). See [PLAN.md](PLAN.md) for the full roadmap.
 
 ## Why this exists
 

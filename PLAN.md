@@ -113,30 +113,37 @@ no TV on the dev network).
 **Deliverable:** `atv key home`, `atv key up`, etc. work — the TV
 responds.
 
-## Phase 4 — Swipe + long-press + click-and-swipe (3–4 days)
+## Phase 4 — Touch / swipe *(done)*
 
-Touch-event encoding for the touchpad-style gestures. Same OPACK
-encoder, just touch-event messages instead of HID commands.
+Touchpad-style gestures, same encrypted-session machinery as HID:
 
-- `sendSwipe(direction)` — touch begin → interpolated moves → end.
-- `sendLongPress(command, ms)` — HID down, wait, HID up.
-- `sendClickAndSwipe(direction)` — HID select-down, swipe sequence,
-  HID select-up.
+- `TouchAction` enum (Press/Hold/Release/Click).
+- `SendTouchAsync(x, y, action)` — fire-and-forget `_hidT` event with
+  timestamp + finger count + coords + phase.
+- `SwipeAsync(start → end, duration)` — interpolates ~16 ms apart.
+- Long-press is already covered by `PressAsync(cmd, hold:)` from Phase 3.
+- CLI: `atv swipe <device-id> <host> <port> <up|down|left|right>`.
 
-**Deliverable:** `atv swipe up`, `atv longpress home 1500`, etc.
-work.
+Click-and-swipe (HID-select held during a touch swipe) is left for
+later — it's just `PressAsync(Select, down:true)` + `SwipeAsync(...)`
++ `PressAsync(Select, down:false)`, easy to layer on once needed.
 
-## Phase 5 — App launcher + text input (1 week)
+## Phase 5 — App launcher + text input
 
-- `fetchApps()` — Companion's `FetchLaunchableApplicationsEvent`
-  returns `[(bundleID, name)]`.
-- `launchApp(bundleID)` — sends `_launchApp` message.
+### 5a. App launcher *(done)*
+
+- `ListAppsAsync()` — bundle id → display-name map (sends
+  `FetchLaunchableApplicationsEvent`, walks the nested response).
+- `LaunchAppAsync(bundleId)` — sends `_launchApp` request.
+- CLI: `atv apps`, `atv launch <bundle-id>`.
+
+### 5b. Remote Text Input *(next)*
+
 - `sendText(text)` / `sendBackspace()` / `sendClearText()` — RTI
-  (Remote Text Input) message family. Requires special pairing
+  (Remote Text Input) message family. Requires a one-time RTI pairing
   follow-up the first time a text field opens on the TV.
 
-**Deliverable:** `atv apps`, `atv launch <bundleID>`, `atv text "hello"`
-all work.
+**Deliverable:** `atv text "hello"` works once a text field is open.
 
 ## Phase 6 — Now Playing (3 days)
 
