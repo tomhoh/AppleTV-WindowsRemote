@@ -19,6 +19,23 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // Give the TaskbarIcon a real glyph. Without an Icon /
+        // IconSource, Hardcodet's NotifyIcon silently registers itself
+        // with the shell but has nothing to draw — the process runs
+        // (visible in Task Manager) but no tray icon appears.
+        if (Resources["TrayIcon"] is TaskbarIcon tray)
+        {
+            try
+            {
+                tray.Icon = TrayIconBuilder.Build();
+            }
+            catch (System.Exception ex)
+            {
+                // Last-ditch fallback: use the generic application icon.
+                System.Diagnostics.Debug.WriteLine($"TrayIconBuilder failed: {ex}");
+                tray.Icon = System.Drawing.SystemIcons.Application;
+            }
+        }
         // MainWindow is created lazily on first click so the tray icon
         // shows up immediately without paying the WPF window startup
         // cost upfront.

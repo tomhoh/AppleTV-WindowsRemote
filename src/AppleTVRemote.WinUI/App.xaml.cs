@@ -30,9 +30,20 @@ public partial class App : Application
         _trayIcon = new TaskbarIcon
         {
             ToolTipText = "Apple TV Remote",
-            // No custom icon yet — H.NotifyIcon falls back to a default;
-            // we'll wire a real .ico in once the WPF version has one.
         };
+        // Without an icon set, H.NotifyIcon registers with the shell but
+        // has nothing to draw — the process runs (visible in Task Manager)
+        // but no tray icon appears. Build one at runtime so we don't have
+        // to ship a .ico alongside the EXE / MSIX.
+        try
+        {
+            _trayIcon.Icon = TrayIconBuilder.Build();
+        }
+        catch (System.Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"TrayIconBuilder failed: {ex}");
+            _trayIcon.Icon = System.Drawing.SystemIcons.Application;
+        }
         _trayIcon.LeftClickCommand    = new RelayCommand(_ => TogglePopup());
         _trayIcon.NoLeftClickDelay    = true;
         _trayIcon.ContextMenuMode     = ContextMenuMode.PopupMenu;
