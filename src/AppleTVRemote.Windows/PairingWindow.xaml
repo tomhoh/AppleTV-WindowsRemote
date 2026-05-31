@@ -5,7 +5,40 @@
         Width="380" Height="440"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
-        ShowInTaskbar="False">
+        ShowInTaskbar="False"
+        Background="{DynamicResource WindowBackground}"
+        Foreground="{DynamicResource WindowForeground}"
+        TextOptions.TextFormattingMode="Display">
+    <Window.Resources>
+        <!-- Light-mode defaults; ApplyTheme() in code-behind re-seeds for dark. -->
+        <SolidColorBrush x:Key="WindowBackground" Color="#FFF8F8F8" />
+        <SolidColorBrush x:Key="WindowForeground" Color="#E6000000" />
+        <SolidColorBrush x:Key="WindowSubtle"     Color="#80000000" />
+        <SolidColorBrush x:Key="WindowStroke"     Color="#26000000" />
+        <SolidColorBrush x:Key="ListBackground"   Color="#FFFFFFFF" />
+
+        <!-- Style overrides so child controls inherit the theme colours. -->
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource WindowForeground}" />
+        </Style>
+        <Style TargetType="ListBox">
+            <Setter Property="Background"    Value="{DynamicResource ListBackground}" />
+            <Setter Property="Foreground"    Value="{DynamicResource WindowForeground}" />
+            <Setter Property="BorderBrush"   Value="{DynamicResource WindowStroke}" />
+        </Style>
+        <Style TargetType="PasswordBox">
+            <Setter Property="Background"  Value="{DynamicResource ListBackground}" />
+            <Setter Property="Foreground"  Value="{DynamicResource WindowForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource WindowStroke}" />
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Background"  Value="{DynamicResource ListBackground}" />
+            <Setter Property="Foreground"  Value="{DynamicResource WindowForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource WindowStroke}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding"     Value="12,4" />
+        </Style>
+    </Window.Resources>
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

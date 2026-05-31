@@ -51,13 +51,17 @@ public partial class App : Application
             _trayIcon.Icon = System.Drawing.SystemIcons.Application;
         }
 
-        // Right-click context menu with Open + Exit. H.NotifyIcon takes a
-        // standard MenuFlyout via ContextFlyout — same shape as any
-        // WinUI control.
+        // Right-click context menu with Open + Exit.
+        //
+        // H.NotifyIcon shows the ContextFlyout in an isolated popup
+        // window that doesn't always route MenuFlyoutItem.Click back to
+        // the App's UI thread reliably — the Command pattern bypasses
+        // that and runs the delegate directly. Same reason we wire
+        // LeftClickCommand below instead of using a Click event.
         var openItem = new MenuFlyoutItem { Text = "Open" };
-        openItem.Click += (_, _) => TogglePopup();
+        openItem.Command = new RelayCommand(_ => TogglePopup());
         var exitItem = new MenuFlyoutItem { Text = "Exit" };
-        exitItem.Click += (_, _) => ExitApp();
+        exitItem.Command = new RelayCommand(_ => ExitApp());
         _trayIcon.ContextFlyout = new MenuFlyout
         {
             Items = { openItem, new MenuFlyoutSeparator(), exitItem },
@@ -79,10 +83,16 @@ public partial class App : Application
 
     private void ExitApp()
     {
-        _trayIcon?.Dispose();
+        // Application.Current.Exit() needs the message loop on the main
+        // window thread to process its quit message — flaky in tray-only
+        // apps where the only "window" is a hidden popup. Tear down
+        // explicitly and fall back to Environment.Exit so the process
+        // actually goes away when the user clicks Exit.
+        try { _trayIcon?.Dispose(); } catch { }
         _trayIcon = null;
-        _popup?.Close();
-        Microsoft.UI.Xaml.Application.Current.Exit();
+        try { _popup?.Close(); } catch { }
+        try { Microsoft.UI.Xaml.Application.Current.Exit(); } catch { }
+        Environment.Exit(0);
     }
 
     private sealed class RelayCommand : System.Windows.Input.ICommand

@@ -26,17 +26,17 @@
             <FontIcon Glyph="&#xE7F4;"
                       FontFamily="Segoe MDL2 Assets"
                       FontSize="22"
-                      Foreground="{ThemeResource DialogSubtle}" />
+                      Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             <TextBlock x:Name="HeaderText"
                        Text="Apple TV Remote"
                        HorizontalAlignment="Center"
                        FontSize="13" FontWeight="SemiBold"
-                       Foreground="{ThemeResource DialogText}" />
+                       Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
             <TextBlock x:Name="SubText"
                        Text="Looking for Apple TVs…"
                        HorizontalAlignment="Center"
                        FontSize="11" Opacity="0.7"
-                       Foreground="{ThemeResource DialogText}"
+                       Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                        TextWrapping="Wrap"
                        TextAlignment="Center" />
         </StackPanel>
@@ -44,7 +44,7 @@
         <!-- Stage 1: scrolling device list (fixed height so it never grows) -->
         <Grid Grid.Row="1" x:Name="ListPanel">
             <Border CornerRadius="6"
-                    Background="{ThemeResource DialogPanel}"
+                    Background="{ThemeResource ControlFillColorDefaultBrush}"
                     Padding="2"
                     Height="160">
                 <ScrollViewer VerticalScrollBarVisibility="Auto"
@@ -57,7 +57,7 @@
                                    Padding="8,12"
                                    TextWrapping="Wrap"
                                    Opacity="0.7"
-                                   Foreground="{ThemeResource DialogText}" />
+                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                         <ListView x:Name="DeviceList"
                                   Visibility="Collapsed"
                                   SelectionMode="Single"
@@ -105,7 +105,7 @@
                        FontSize="11"
                        TextAlignment="Center"
                        TextWrapping="Wrap"
-                       Foreground="{ThemeResource DialogText}" />
+                       Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
             <TextBox x:Name="PinBox"
                      FontSize="20"
                      FontWeight="SemiBold"

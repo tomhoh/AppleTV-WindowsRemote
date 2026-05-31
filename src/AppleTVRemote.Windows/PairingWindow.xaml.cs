@@ -18,7 +18,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using AppleTVProtocol;
+using Microsoft.Win32;
 
 namespace AppleTVRemote.Windows;
 
@@ -35,8 +37,67 @@ public partial class PairingWindow : Window
     {
         InitializeComponent();
         DeviceList.ItemsSource = _devices;
-        Loaded += async (_, _) => await StartDiscoveryAsync();
-        Closed += (_, _) => StopDiscovery();
+        // Apply theme before the visual tree paints to avoid a flash of
+        // the light defaults on a dark-mode system.
+        ApplyTheme();
+        Loaded += async (_, _) =>
+        {
+            ApplyTheme();
+            SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+            await StartDiscoveryAsync();
+        };
+        Closed += (_, _) =>
+        {
+            SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+            StopDiscovery();
+        };
+    }
+
+    private void OnUserPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)
+    {
+        if (e.Category == UserPreferenceCategory.General)
+            Dispatcher.Invoke(ApplyTheme);
+    }
+
+    private static bool IsSystemDark()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            if (key?.GetValue("AppsUseLightTheme")    is int a) return a == 0;
+            if (key?.GetValue("SystemUsesLightTheme") is int s) return s == 0;
+        }
+        catch { }
+        return false;
+    }
+
+    private void ApplyTheme()
+    {
+        if (IsSystemDark())
+        {
+            Resources["WindowBackground"] = Solid("#FF1F1F1F");
+            Resources["WindowForeground"] = Solid("#E6FFFFFF");
+            Resources["WindowSubtle"]     = Solid("#99FFFFFF");
+            Resources["WindowStroke"]     = Solid("#33FFFFFF");
+            Resources["ListBackground"]   = Solid("#FF2B2B2B");
+        }
+        else
+        {
+            Resources["WindowBackground"] = Solid("#FFF8F8F8");
+            Resources["WindowForeground"] = Solid("#E6000000");
+            Resources["WindowSubtle"]     = Solid("#80000000");
+            Resources["WindowStroke"]     = Solid("#26000000");
+            Resources["ListBackground"]   = Solid("#FFFFFFFF");
+        }
+    }
+
+    private static SolidColorBrush Solid(string hex)
+    {
+        var c = (Color)ColorConverter.ConvertFromString(hex)!;
+        var b = new SolidColorBrush(c);
+        b.Freeze();
+        return b;
     }
 
     // ─── Stage 1: discovery ────────────────────────────────────────
