@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 //
-// WinUI 3 mirror of the WPF PairingWindow. Lives as a ContentDialog so
-// it overlays the MainWindow without spawning another OS window.
+// Compact two-stage pairing dialog (WinUI mirror of the SwiftUI mac
+// PairingView):
+//
+//   Stage 1 — header + scrollable device list (or "no devices" hint).
+//   Stage 2 — header + PIN entry. Auto-pairs once the user types 4 digits.
 
 using System;
 using System.Collections.ObjectModel;
-using System.ComponentModel;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -30,7 +33,21 @@ public sealed partial class PairingDialog : ContentDialog
         DeviceList.ItemsSource = _devices;
         Opened += async (_, _) => await StartDiscoveryAsync();
         Closed += (_, _) => StopDiscovery();
-        PrimaryButtonClick += OnPrimaryClick;
+        PrimaryButtonClick   += OnPrimaryClick;
+        SecondaryButtonClick += OnSecondaryClick;
+        PinBox.TextChanged += (_, _) =>
+        {
+            // Strip non-digits; auto-submit when 4 digits arrive.
+            var raw = PinBox.Text ?? string.Empty;
+            var clean = new string(raw.Where(char.IsDigit).ToArray());
+            if (clean.Length > 4) clean = clean.Substring(0, 4);
+            if (clean != raw)
+            {
+                PinBox.Text = clean;
+                PinBox.SelectionStart = clean.Length;
+            }
+            IsPrimaryButtonEnabled = clean.Length == 4 && _picked is not null;
+        };
     }
 
     // ─── Stage 1: discovery ────────────────────────────────────────
@@ -39,8 +56,9 @@ public sealed partial class PairingDialog : ContentDialog
     {
         StopDiscovery();
         _devices.Clear();
-        HeaderText.Text = "Discovering Apple TVs on your network…";
-        SubText.Text    = "Make sure your TV is awake and on the same network.";
+        SetStage1();
+        HeaderText.Text = "Pair Apple TV";
+        SubText   .Text = "Looking for Apple TVs on your network…";
 
         _discoveryCts = new CancellationTokenSource();
         _discovery    = new DeviceDiscovery();
@@ -51,28 +69,30 @@ public sealed partial class PairingDialog : ContentDialog
                 foreach (var existing in _devices)
                     if (existing.FullName == dev.FullName) return;
                 _devices.Add(dev);
-                UpdateHeaderForCount();
+                UpdateDeviceListVisibility();
             });
 
         try
         {
             await _discovery.BrowseAsync(TimeSpan.FromSeconds(4), _discoveryCts.Token);
-            UpdateHeaderForCount();
+            UpdateDeviceListVisibility();
         }
         catch (OperationCanceledException) { }
     }
 
-    private void UpdateHeaderForCount()
+    private void UpdateDeviceListVisibility()
     {
         if (_devices.Count == 0)
         {
-            HeaderText.Text = "No Apple TVs found.";
-            SubText.Text    = "If your TV is awake and on the same network, try Pair again.";
+            SubText.Text          = "No Apple TVs found.";
+            EmptyHint.Visibility  = Visibility.Visible;
+            DeviceList.Visibility = Visibility.Collapsed;
         }
         else
         {
-            HeaderText.Text = $"{_devices.Count} Apple TV{(_devices.Count == 1 ? "" : "s")} found.";
-            SubText.Text    = "Pick one to pair.";
+            SubText.Text          = $"{_devices.Count} device{(_devices.Count == 1 ? "" : "s")} found — tap one to pair.";
+            EmptyHint.Visibility  = Visibility.Collapsed;
+            DeviceList.Visibility = Visibility.Visible;
         }
     }
 
@@ -92,25 +112,42 @@ public sealed partial class PairingDialog : ContentDialog
         if (DeviceList.SelectedItem is not AppleTVDevice d) return;
         _picked = d;
         StopDiscovery();
+        SetStage2(d);
+    }
 
-        DeviceList.Visibility = Visibility.Collapsed;
-        PinPanel  .Visibility = Visibility.Visible;
-        IsPrimaryButtonEnabled = true;
+    private void SetStage1()
+    {
+        ListPanel.Visibility = Visibility.Visible;
+        PinPanel .Visibility = Visibility.Collapsed;
+        PinError .Visibility = Visibility.Collapsed;
+        SecondaryButtonText = "Cancel";
+        IsPrimaryButtonEnabled = false;
+    }
 
-        HeaderText.Text = $"Pair with \"{d.Name}\"";
-        SubText   .Text = $"{d.Address}:{d.Port}   ·   {d.Model ?? "Apple TV"}";
-        PinPrompt .Text = "Enter the 4-digit PIN shown on your Apple TV:";
-        PinBox.Password = string.Empty;
-        PinBox.Focus(FocusState.Keyboard);
+    private void SetStage2(AppleTVDevice device)
+    {
+        ListPanel.Visibility = Visibility.Collapsed;
+        PinPanel .Visibility = Visibility.Visible;
+        HeaderText.Text = $"Pair “{device.Name}”";
+        SubText   .Text = $"{device.Address}:{device.Port}";
+        PinPrompt .Text = "Enter the 4-digit PIN shown on your Apple TV.";
+        PinBox.Text   = string.Empty;
+        SecondaryButtonText = "Back";
+        IsPrimaryButtonEnabled = false;
+        PinBox.Focus(FocusState.Programmatic);
     }
 
     private async void OnPrimaryClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
         if (_picked is null) return;
-        var pin = PinBox.Password?.Trim() ?? string.Empty;
-        if (string.IsNullOrEmpty(pin)) { ShowPinError("PIN is required."); args.Cancel = true; return; }
+        var pin = (PinBox.Text ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(pin))
+        {
+            ShowPinError("PIN is required.");
+            args.Cancel = true;
+            return;
+        }
 
-        // Defer dialog close while we do async work.
         var deferral = args.GetDeferral();
         SetBusy(true);
         try
@@ -144,6 +181,23 @@ public sealed partial class PairingDialog : ContentDialog
         {
             SetBusy(false);
             deferral.Complete();
+        }
+    }
+
+    /// <summary>
+    /// Override the default Secondary button behaviour: in Stage 2,
+    /// "Back" returns to Stage 1 instead of dismissing the dialog.
+    /// </summary>
+    private void OnSecondaryClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
+    {
+        if (PinPanel.Visibility == Visibility.Visible)
+        {
+            args.Cancel = true;
+            _picked = null;
+            SetStage1();
+            DeviceList.SelectedItem = null;
+            // Re-arm discovery so the list isn't stuck empty after Back.
+            _ = StartDiscoveryAsync();
         }
     }
 
