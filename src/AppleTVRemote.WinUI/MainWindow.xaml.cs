@@ -414,23 +414,40 @@ public sealed partial class MainWindow : WindowEx
 
     // ─── Pairing entry point ───────────────────────────────────────
 
-    private async void OnOpenPairClicked(object sender, RoutedEventArgs e)
+    private PairingWindow? _pairingWindow;
+
+    private void OnOpenPairClicked(object sender, RoutedEventArgs e)
     {
-        if (Content?.XamlRoot is null) return;
-        var dlg = new PairingDialog { XamlRoot = Content.XamlRoot };
-        var result = await dlg.ShowAsync();
-        if (result == ContentDialogResult.Primary && dlg.PairedCredentials is { } c)
+        // PairingWindow used to live as a ContentDialog inside this
+        // popup, but a ContentDialog is bounded by the popup's tiny
+        // XamlRoot (200×380) and content got clipped. It's a standalone
+        // WindowEx now; we listen for its Closed event to refresh the
+        // device picker if the user successfully paired.
+        if (_pairingWindow is not null)
         {
-            RefreshDevices();
-            foreach (var item in DeviceCombo.Items)
+            _pairingWindow.Activate();
+            return;
+        }
+
+        var pw = new PairingWindow();
+        _pairingWindow = pw;
+        pw.Closed += (_, _) =>
+        {
+            _pairingWindow = null;
+            if (pw.PairedCredentials is { } c)
             {
-                if (item is StoredCredentials sc && sc.DeviceId == c.DeviceId)
+                RefreshDevices();
+                foreach (var item in DeviceCombo.Items)
                 {
-                    DeviceCombo.SelectedItem = item;
-                    break;
+                    if (item is StoredCredentials sc && sc.DeviceId == c.DeviceId)
+                    {
+                        DeviceCombo.SelectedItem = item;
+                        break;
+                    }
                 }
             }
-        }
+        };
+        pw.Activate();
     }
 
     // ─── Connection management ─────────────────────────────────────
