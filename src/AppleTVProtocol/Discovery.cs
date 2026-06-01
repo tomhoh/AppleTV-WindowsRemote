@@ -257,10 +257,14 @@ public sealed class DeviceDiscovery : IDisposable
                 var msg = new Message();
                 msg.Read(res.Buffer, 0, res.Buffer.Length);
 
-                // Find any companion-link SRV in the answer set. The PTR
-                // points us at an instance name; the SRV gives us the port.
+                // Find the COMPANION-LINK SRV specifically. Some
+                // responders fold unrelated SRVs (airplay, raop) into the
+                // additional-records section; picking the first one would
+                // give us the wrong port and Companion frames sent there
+                // are silently dropped.
                 var records = msg.Answers.Concat(msg.AdditionalRecords).ToArray();
-                var srv = records.OfType<SRVRecord>().FirstOrDefault();
+                var srv = records.OfType<SRVRecord>().FirstOrDefault(r =>
+                    r.Name.ToString().Contains("_companion-link", StringComparison.OrdinalIgnoreCase));
                 if (srv is null) continue;
 
                 var dev = TryResolveFromMessage(srv.Name, msg);

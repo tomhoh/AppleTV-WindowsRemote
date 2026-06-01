@@ -295,16 +295,27 @@ public sealed partial class PairingWindow : WindowEx
         if (string.IsNullOrEmpty(pin)) { ShowPinError("PIN is required."); return; }
 
         SetBusy(true);
+        PairLog.Text = string.Empty;
+        PairLogScroll.Visibility = Visibility.Visible;
+        var dq = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+        void AppendLog(string msg) =>
+            dq?.TryEnqueue(() =>
+            {
+                PairLog.Text += $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n";
+            });
         try
         {
+            AppendLog($"connecting to {_picked.AddressString}:{_picked.Port} (TCP)…");
             await using var conn = new CompanionConnection(_picked.Address.ToString(), _picked.Port);
             await conn.ConnectAsync();
+            AppendLog("TCP connected, starting pair-setup");
 
             var pairingId = Encoding.ASCII.GetBytes(Guid.NewGuid().ToString());
             var setup = new CompanionPairSetup(conn, timeout: TimeSpan.FromSeconds(30));
             var creds = await setup.RunAsync(pin, pairingId,
                                               clientSeed: null,
-                                              displayName: _picked.Name);
+                                              displayName: _picked.Name,
+                                              onProgress: AppendLog);
 
             var deviceId = Convert.ToHexString(creds.AtvIdentifier).ToLowerInvariant();
             PairedCredentials = new StoredCredentials(

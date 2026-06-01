@@ -108,6 +108,18 @@
                          Height="4"
                          IsIndeterminate="True"
                          Visibility="Collapsed" />
+            <!-- Live status from CompanionPairSetup.onProgress so the user
+                 can see which step actually failed when pair-verify
+                 silently fails (typical: TV never shows PIN). -->
+            <TextBox x:Name="PairLog"
+                     Margin="0,12,0,0"
+                     Height="80"
+                     IsReadOnly="True"
+                     FontFamily="Consolas" FontSize="10"
+                     TextWrapping="NoWrap"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"
+                     Visibility="Collapsed" />
         </StackPanel>
 
         <!-- Footer buttons -->

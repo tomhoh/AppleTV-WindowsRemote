@@ -138,6 +138,14 @@
                          Height="3"
                          IsIndeterminate="True"
                          Visibility="Collapsed" />
+            <ScrollViewer x:Name="PairLogScroll"
+                          Visibility="Collapsed"
+                          Width="320" Height="100"
+                          VerticalScrollBarVisibility="Auto">
+                <TextBlock x:Name="PairLog"
+                           FontFamily="Consolas" FontSize="10"
+                           TextWrapping="NoWrap" />
+            </ScrollViewer>
         </StackPanel>
 
         <!-- Footer -->

@@ -171,8 +171,10 @@ public sealed class CompanionPairSetup
         byte[] clientPairingId,
         byte[]? clientSeed = null,
         string? displayName = null,
+        Action<string>? onProgress = null,
         CancellationToken cancel = default)
     {
+        void Log(string msg) { try { onProgress?.Invoke(msg); } catch { } }
         // ── set up state ──
         clientSeed ??= System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
         var ed = Ed25519PrivateKey.FromSeed(clientSeed);
@@ -186,14 +188,24 @@ public sealed class CompanionPairSetup
         var pendingWait = new SemaphoreSlim(0);
         EventHandler<CompanionFrame> handler = (_, frame) =>
         {
-            // Only handle PS_Next responses; ignore noise.
+            // Only handle PS_Next responses; log others so we can see if
+            // the TV is sending us anything unexpected.
             if (frame.Type == CompanionFrameType.PS_Next)
             {
+                Log($"received PS_Next frame ({frame.Payload.Length} bytes)");
                 lock (pending) pending.Enqueue(frame.Payload);
                 pendingWait.Release();
             }
+            else
+            {
+                Log($"received unexpected frame type={frame.Type} ({frame.Payload.Length} bytes) — ignoring");
+            }
         };
         _conn.FrameReceived += handler;
+
+        EventHandler<Exception?> closedHandler = (_, ex) =>
+            Log($"connection closed by peer{(ex is not null ? $" with error: {ex.GetType().Name}: {ex.Message}" : "")}");
+        _conn.Closed += closedHandler;
 
         async Task<Dictionary<byte, byte[]>> AwaitReplyAsync()
         {
@@ -208,19 +220,26 @@ public sealed class CompanionPairSetup
         try
         {
             // ── M1 → ── ── M2 ← ──
-            await _conn.SendAsync(CompanionFrameType.PS_Start, PairSetupMessages.BuildM1(), cancel).ConfigureAwait(false);
+            var m1Bytes = PairSetupMessages.BuildM1();
+            Log($"sending PS_Start M1 ({m1Bytes.Length} bytes) — TV should display PIN");
+            await _conn.SendAsync(CompanionFrameType.PS_Start, m1Bytes, cancel).ConfigureAwait(false);
+            Log($"waiting up to {_timeout.TotalSeconds:0}s for M2…");
             var m2 = await AwaitReplyAsync().ConfigureAwait(false);
             if (!m2.TryGetValue((byte)Tlv8Tag.Salt, out var atvSalt) ||
                 !m2.TryGetValue((byte)Tlv8Tag.PublicKey, out var atvPub))
                 throw new HapPairingException("M2 reply missing salt or public-key");
+            Log($"M2 OK — salt={atvSalt.Length}B, B={atvPub.Length}B");
 
             // ── M3 → ── ── M4 ← ──
             var (A, M1proof) = srp.ProcessChallenge(atvSalt, atvPub);
+            Log($"sending M3 (A={A.Length}B, proof={M1proof.Length}B)");
             await _conn.SendAsync(CompanionFrameType.PS_Next, PairSetupMessages.BuildM3(A, M1proof), cancel).ConfigureAwait(false);
+            Log("waiting for M4 (server proof)…");
             var m4 = await AwaitReplyAsync().ConfigureAwait(false);
             if (!m4.TryGetValue((byte)Tlv8Tag.Proof, out var atvProof))
                 throw new HapPairingException("M4 reply missing proof");
             srp.VerifyServerProof(M1proof, atvProof);
+            Log("M4 OK — server proof verified");
 
             // ── M5 →  (encrypted inner TLV) ──
             var sessionKey = Crypto.HkdfSha512(srp.SharedKey, EncryptSalt, EncryptInfo);
@@ -303,6 +322,7 @@ public sealed class CompanionPairSetup
         finally
         {
             _conn.FrameReceived -= handler;
+            _conn.Closed       -= closedHandler;
             pendingWait.Dispose();
         }
     }

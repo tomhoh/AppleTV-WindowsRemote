@@ -298,16 +298,24 @@ public partial class PairingWindow : Window
         }
 
         SetBusy(true);
+        PairLog.Clear();
+        PairLog.Visibility = Visibility.Visible;
+        void AppendLog(string msg) =>
+            Dispatcher.Invoke(() => PairLog.AppendText($"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n"));
+
         try
         {
+            AppendLog($"connecting to {_picked.AddressString}:{_picked.Port} (TCP)…");
             await using var conn = new CompanionConnection(_picked.Address.ToString(), _picked.Port);
             await conn.ConnectAsync();
+            AppendLog("TCP connected, starting pair-setup");
 
             var pairingId = Encoding.ASCII.GetBytes(Guid.NewGuid().ToString());
             var setup = new CompanionPairSetup(conn, timeout: TimeSpan.FromSeconds(30));
             var creds = await setup.RunAsync(pin, pairingId,
                                               clientSeed: null,
-                                              displayName: _picked.Name);
+                                              displayName: _picked.Name,
+                                              onProgress: AppendLog);
 
             var deviceId = Convert.ToHexString(creds.AtvIdentifier).ToLowerInvariant();
             PairedCredentials = new StoredCredentials(
