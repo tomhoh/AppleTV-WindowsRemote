@@ -264,11 +264,36 @@ public sealed partial class MainWindow : WindowEx
         _dragBaseline = e.GetCurrentPoint(Clickpad).Position;
         _totalDragDistance = 0;
         Clickpad.CapturePointer(e.Pointer);
+        // If anything yanks our pointer capture (focus theft, popup
+        // dismissal, …), clear the drag state so subsequent hovers
+        // don't fire commands.
+        Clickpad.PointerCaptureLost -= OnClickpadPointerCaptureLost;
+        Clickpad.PointerCaptureLost += OnClickpadPointerCaptureLost;
+    }
+
+    private void OnClickpadPointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        _dragActive = false;
+        _hoveredRegion = null;
+        ApplyHoverRegion(null);
     }
 
     private async void OnClickpadPointerMoved(object sender, PointerRoutedEventArgs e)
     {
-        var p = e.GetCurrentPoint(Clickpad).Position;
+        var pp = e.GetCurrentPoint(Clickpad);
+        var p = pp.Position;
+
+        // Defensive: if we somehow held a stale drag flag (capture
+        // broke, releaseed event was missed), clear it before
+        // treating this move as a drag. Hovering with _dragActive
+        // stuck-on is exactly the 'controls fire without clicking'
+        // bug — the move dispatches HID commands against a stale
+        // baseline and the highlight doesn't track the cursor.
+        if (_dragActive && !pp.Properties.IsLeftButtonPressed)
+        {
+            _dragActive = false;
+            try { Clickpad.ReleasePointerCapture(e.Pointer); } catch { }
+        }
 
         if (_dragActive)
         {

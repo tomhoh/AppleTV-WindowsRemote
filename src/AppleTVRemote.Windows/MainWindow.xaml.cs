@@ -197,10 +197,37 @@ public partial class MainWindow : Window
         _dragBaseline = e.GetPosition(Clickpad);
         _totalDragDistance = 0;
         Clickpad.CaptureMouse();
+        // Belt-and-suspenders: if anything (focus theft, another control
+        // grabbing capture, the window losing activation) yanks our
+        // mouse capture, clear the drag state so the next hover doesn't
+        // dispatch.
+        Clickpad.LostMouseCapture -= OnClickpadLostCapture;
+        Clickpad.LostMouseCapture += OnClickpadLostCapture;
+    }
+
+    private void OnClickpadLostCapture(object sender, MouseEventArgs e)
+    {
+        _dragActive = false;
+        _hoveredRegion = null;
+        ApplyHoverRegion(null);
     }
 
     private void OnClickpadMove(object sender, MouseEventArgs e)
     {
+        // Defensive: if we lost the up event (mouse left the window
+        // mid-drag, focus was stolen, capture was broken by another
+        // control, …), _dragActive can linger. Any subsequent hover
+        // would then enter the drag branch below, dispatch HID
+        // commands, and flash quadrants based on a stale baseline —
+        // exactly the symptom 'hover fires controls / highlight
+        // doesn't follow the pointer'. Clear the flag whenever the
+        // button isn't actually pressed.
+        if (_dragActive && e.LeftButton != MouseButtonState.Pressed)
+        {
+            _dragActive = false;
+            if (Clickpad.IsMouseCaptured) Clickpad.ReleaseMouseCapture();
+        }
+
         var p = e.GetPosition(Clickpad);
 
         if (_dragActive)
