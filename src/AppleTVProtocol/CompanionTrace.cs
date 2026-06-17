@@ -40,7 +40,10 @@ public static class CompanionTrace
             }
             catch { /* logging is best-effort */ }
             _logPath = path;
-            WriteRaw($"--- session opened {DateTime.UtcNow:O} ---");
+            var asm = System.Reflection.Assembly.GetEntryAssembly()
+                   ?? System.Reflection.Assembly.GetExecutingAssembly();
+            var version = asm.GetName().Version?.ToString() ?? "unknown";
+            WriteRaw($"--- session opened {DateTime.UtcNow:O} — AppleTVRemote v{version} ---");
             return path;
         }
     }
