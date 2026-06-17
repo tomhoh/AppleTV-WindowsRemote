@@ -138,18 +138,23 @@ public sealed class CompanionSession : IAsyncDisposable
         // 4. _tiStart — text-input session start, empty content.
         await SendRequestAsync("_tiStart", new Dictionary<string, object?>(), timeout: TimeSpan.FromSeconds(10), cancel: cancel).ConfigureAwait(false);
 
-        // 5. Subscribe to media-controls events. pyatv subscribes ONLY to
-        // _iMC here — earlier we were also subscribing to SystemStatus,
-        // TVSystemStatus, _tiStarted, _tiStopped (matching the Swift sibling),
-        // but on the user's tvOS that subscription request appeared to put
-        // the Companion service into a state where FetchLaunchableApplications
-        // Event was silently dropped. Stick to pyatv's exact set until we
-        // have proof a broader subscription is safe.
+        // 5. Subscribe to events (Swift sibling's exact set). Fire-and-forget.
         var interest = new Dictionary<string, object?>
         {
-            { "_regEvents", new object[] { "_iMC" } },
+            { "_regEvents", new object[] { "_iMC", "SystemStatus", "TVSystemStatus", "_tiStarted", "_tiStopped" } },
         };
         await SendEventNoWaitAsync("_interest", interest, cancel).ConfigureAwait(false);
+
+        // 6. _fetchAttentionState — Request, AWAIT response.
+        // This is what Swift CompanionSession does on receipt of the
+        // _sessionStart response (CompanionSession.swift:576-592): it sends
+        // _interest, then _fetchAttentionState, and only fires
+        // sessionDidConfirmStart() after the latter's reply arrives. Without
+        // this final handshake the TV processes session-init replies and HID
+        // commands but silently drops FetchLaunchableApplicationsEvent and
+        // _launchApp — observed end-to-end in the v0.1.30 wire trace.
+        await SendRequestAsync("_fetchAttentionState", new Dictionary<string, object?>(),
+            timeout: TimeSpan.FromSeconds(10), cancel: cancel).ConfigureAwait(false);
     }
 
     private async Task<int> SendRequestNoWaitAsync(string identifier, IDictionary<string, object?> content, CancellationToken cancel)
