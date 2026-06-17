@@ -77,12 +77,6 @@ public sealed class CompanionSession : IAsyncDisposable
     private int _xidCounter;
     private TimeSpan _defaultTimeout = TimeSpan.FromSeconds(5);
 
-    // Set by SendSessionInitAsync to the XID we used for _sessionStart.
-    // When its response arrives we send _interest to subscribe to events —
-    // that inbound traffic keeps the ATV's idle timer from firing, so no
-    // separate keepalive timer is needed (matches pyatv / Swift behavior).
-    private int _sessionStartXid;
-
     public CompanionSession(CompanionConnection conn)
     {
         _conn = conn ?? throw new ArgumentNullException(nameof(conn));
@@ -93,16 +87,13 @@ public sealed class CompanionSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Send the four session-init messages required after pair-verify
-    /// (_systemInfo, _touchStart, _sessionStart, _tiStart). Without
-    /// _touchStart the ATV closes the socket ~35 s after pair-verify;
-    /// without the full sequence, HID commands stop being processed
-    /// after the first one ("task was cancelled" timeouts). Once the
-    /// _sessionStart response arrives we subscribe to events via
-    /// _interest — the resulting inbound event traffic acts as the
-    /// natural keepalive, so no separate timer is needed. Mirrors the
-    /// Swift sibling's CompanionSession.sendSessionInit + onInbound
-    /// _sessionStart handling.
+    /// Run the post-pair-verify session-init handshake. Mirrors pyatv's
+    /// CompanionAPI.connect(): system_info → touch_start → session_start →
+    /// text_input_start → subscribe_event("_iMC"), all AWAITED in sequence.
+    /// The TV ignores app-launcher RPCs (FetchLaunchableApplicationsEvent,
+    /// _launchApp) until the client has acknowledged all four init responses
+    /// — fire-and-forget left every reply orphaned in _pending and the next
+    /// FetchApps just timed out. Mirrors pyatv api.py:153-158.
     /// </summary>
     public async Task SendSessionInitAsync(string clientId, string deviceName, CancellationToken cancel = default)
     {
@@ -123,7 +114,7 @@ public sealed class CompanionSession : IAsyncDisposable
             { "model",  "MacBookPro" },
             { "name",   deviceName },
         };
-        await SendRequestNoWaitAsync("_systemInfo", sysInfo, cancel).ConfigureAwait(false);
+        await SendRequestAsync("_systemInfo", sysInfo, timeout: TimeSpan.FromSeconds(10), cancel: cancel).ConfigureAwait(false);
 
         // 2. _touchStart — load-bearing: without it the ATV closes the
         //    socket ~35 s after pair-verify (mirrors pyatv api.py:450).
@@ -133,20 +124,29 @@ public sealed class CompanionSession : IAsyncDisposable
             { "_tFl",    0 },
             { "_width",  1000 },
         };
-        await SendRequestNoWaitAsync("_touchStart", touchStart, cancel).ConfigureAwait(false);
+        await SendRequestAsync("_touchStart", touchStart, timeout: TimeSpan.FromSeconds(10), cancel: cancel).ConfigureAwait(false);
 
-        // 3. _sessionStart — remember its XID so OnFrameReceived can
-        //    fire _interest as soon as the matching response arrives.
+        // 3. _sessionStart — async-await pattern mirrors pyatv _session_start().
         uint sid = (uint)Random.Shared.Next(int.MinValue, int.MaxValue);
         var sessionStart = new Dictionary<string, object?>
         {
             { "_srvT", "com.apple.tvremoteservices" },
             { "_sid",  sid },
         };
-        _sessionStartXid = await SendRequestNoWaitAsync("_sessionStart", sessionStart, cancel).ConfigureAwait(false);
+        await SendRequestAsync("_sessionStart", sessionStart, timeout: TimeSpan.FromSeconds(10), cancel: cancel).ConfigureAwait(false);
 
         // 4. _tiStart — text-input session start, empty content.
-        await SendRequestNoWaitAsync("_tiStart", new Dictionary<string, object?>(), cancel).ConfigureAwait(false);
+        await SendRequestAsync("_tiStart", new Dictionary<string, object?>(), timeout: TimeSpan.FromSeconds(10), cancel: cancel).ConfigureAwait(false);
+
+        // 5. Subscribe to events so the TV pushes us periodic state updates
+        // — that inbound traffic keeps the connection's app-level idle timer
+        // alive (pyatv only subscribes to _iMC; we add a few others the Swift
+        // sibling subscribes to). Fire-and-forget Event, no response expected.
+        var interest = new Dictionary<string, object?>
+        {
+            { "_regEvents", new object[] { "_iMC", "SystemStatus", "TVSystemStatus", "_tiStarted", "_tiStopped" } },
+        };
+        await SendEventNoWaitAsync("_interest", interest, cancel).ConfigureAwait(false);
     }
 
     private async Task<int> SendRequestNoWaitAsync(string identifier, IDictionary<string, object?> content, CancellationToken cancel)
@@ -463,19 +463,6 @@ public sealed class CompanionSession : IAsyncDisposable
                 else if (CompanionTrace.IsEnabled)
                 {
                     CompanionTrace.Write("RECV", $"response xid=0x{respXid:x8} has no pending request, dropped ({frame.Payload.Length}B)");
-                }
-
-                // When _sessionStart's response arrives, subscribe to events
-                // so the ATV pushes us periodic state updates — that inbound
-                // traffic keeps the connection's app-level idle timer alive.
-                if (respXid == _sessionStartXid)
-                {
-                    _sessionStartXid = 0;
-                    var interest = new Dictionary<string, object?>
-                    {
-                        { "_regEvents", new object[] { "_iMC", "SystemStatus", "TVSystemStatus", "_tiStarted", "_tiStopped" } },
-                    };
-                    _ = SendEventNoWaitAsync("_interest", interest, CancellationToken.None);
                 }
                 return;
 
