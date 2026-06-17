@@ -76,6 +76,8 @@ public sealed class CompanionSession : IAsyncDisposable
     private readonly ConcurrentDictionary<int, TaskCompletionSource<IDictionary<string, object?>>> _pending = new();
     private int _xidCounter;
     private TimeSpan _defaultTimeout = TimeSpan.FromSeconds(5);
+    private Timer? _keepaliveTimer;
+    private static readonly TimeSpan KeepaliveInterval = TimeSpan.FromSeconds(25);
 
     public CompanionSession(CompanionConnection conn)
     {
@@ -84,6 +86,86 @@ public sealed class CompanionSession : IAsyncDisposable
             throw new InvalidOperationException("CompanionSession requires the connection to be in encrypted mode (run pair-verify first)");
         _xidCounter = Random.Shared.Next();  // initial XID, mirrors pyatv
         _conn.FrameReceived += OnFrameReceived;
+    }
+
+    /// <summary>
+    /// Send the four session-init messages required after pair-verify
+    /// (_systemInfo, _touchStart, _sessionStart, _tiStart) and start a
+    /// 25-second keepalive. Without _touchStart the Apple TV closes the
+    /// socket after ~35 s; without the full sequence, HID commands stop
+    /// being processed after the first one ("task was cancelled" timeouts).
+    /// Mirrors the Swift sibling's CompanionSession.sendSessionInit.
+    /// </summary>
+    public async Task SendSessionInitAsync(string clientId, string deviceName, CancellationToken cancel = default)
+    {
+        if (string.IsNullOrWhiteSpace(clientId))   throw new ArgumentException("clientId required",   nameof(clientId));
+        if (string.IsNullOrWhiteSpace(deviceName)) throw new ArgumentException("deviceName required", nameof(deviceName));
+
+        // 1. _systemInfo
+        var sysInfo = new Dictionary<string, object?>
+        {
+            { "_bf",    0 },
+            { "_cf",    512 },
+            { "_clFl",  128 },
+            { "_i",     clientId },
+            { "_idsID", System.Text.Encoding.UTF8.GetBytes(clientId) },
+            { "_pubID", clientId },
+            { "_sf",    256 },
+            { "_sv",    "170.18" },
+            { "model",  "MacBookPro" },
+            { "name",   deviceName },
+        };
+        await SendRequestNoWaitAsync("_systemInfo", sysInfo, cancel).ConfigureAwait(false);
+
+        // 2. _touchStart — load-bearing: without it the ATV closes the
+        //    socket ~35 s after pair-verify (mirrors pyatv api.py:450).
+        var touchStart = new Dictionary<string, object?>
+        {
+            { "_height", 1000 },
+            { "_tFl",    0 },
+            { "_width",  1000 },
+        };
+        await SendRequestNoWaitAsync("_touchStart", touchStart, cancel).ConfigureAwait(false);
+
+        // 3. _sessionStart for the tvremoteservices session.
+        uint sid = (uint)Random.Shared.Next(int.MinValue, int.MaxValue);
+        var sessionStart = new Dictionary<string, object?>
+        {
+            { "_srvT", "com.apple.tvremoteservices" },
+            { "_sid",  sid },
+        };
+        await SendRequestNoWaitAsync("_sessionStart", sessionStart, cancel).ConfigureAwait(false);
+
+        // 4. _tiStart — text-input session start, empty content.
+        await SendRequestNoWaitAsync("_tiStart", new Dictionary<string, object?>(), cancel).ConfigureAwait(false);
+
+        StartKeepalive();
+    }
+
+    private void StartKeepalive()
+    {
+        _keepaliveTimer?.Dispose();
+        _keepaliveTimer = new Timer(_ =>
+        {
+            try
+            {
+                _ = SendRequestNoWaitAsync("_fetchAttentionState", new Dictionary<string, object?>(), CancellationToken.None);
+            }
+            catch { /* keepalive is best-effort */ }
+        }, null, KeepaliveInterval, KeepaliveInterval);
+    }
+
+    private async Task SendRequestNoWaitAsync(string identifier, IDictionary<string, object?> content, CancellationToken cancel)
+    {
+        int xid = System.Threading.Interlocked.Increment(ref _xidCounter);
+        var envelope = new Dictionary<string, object?>
+        {
+            { "_i", identifier },
+            { "_t", (int)CompanionMessageType.Request },
+            { "_c", content },
+            { "_x", xid },
+        };
+        await _conn.SendAsync(CompanionFrameType.E_OPACK, Opack.Pack(envelope), cancel).ConfigureAwait(false);
     }
 
     public TimeSpan DefaultTimeout
@@ -275,6 +357,8 @@ public sealed class CompanionSession : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
+        _keepaliveTimer?.Dispose();
+        _keepaliveTimer = null;
         _conn.FrameReceived -= OnFrameReceived;
         foreach (var tcs in _pending.Values)
             tcs.TrySetCanceled();

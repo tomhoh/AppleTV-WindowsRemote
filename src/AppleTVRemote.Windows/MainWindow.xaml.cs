@@ -474,6 +474,13 @@ public partial class MainWindow : Window
             _conn          = conn;
             _session       = new CompanionSession(conn);
             _activeDevice  = selected;
+
+            // Apple TV requires four init messages (and a periodic
+            // keepalive) after pair-verify; without them, HID commands
+            // stop being processed after the first one.
+            var clientIdString = System.Text.Encoding.ASCII.GetString(selected.Credentials.ClientIdentifier);
+            await _session.SendSessionInitAsync(clientIdString, Environment.MachineName ?? "Windows Remote");
+
             return _session;
         }
         catch (Exception ex)
