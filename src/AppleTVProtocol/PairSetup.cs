@@ -166,8 +166,24 @@ public sealed class CompanionPairSetup
     /// <param name="displayName">
     /// Optional friendly name to send as `Name` in the M5 inner TLV.
     /// </param>
+    /// <summary>
+    /// Run pair-setup with a PIN collected from the user AFTER M1
+    /// triggers the TV's PIN display.
+    ///
+    /// Flow:
+    ///   1. Send M1, await M2 (TV shows PIN on its screen here).
+    ///   2. Call <paramref name="getPinAsync"/> — the UI prompts the user
+    ///      for the PIN now visible on the TV. The returned Task supplies
+    ///      the PIN string when the user submits it.
+    ///   3. Send M3 using that PIN, finish M4/M5/M6, return creds.
+    ///
+    /// Earlier versions asked for the PIN before M1, which meant we sent
+    /// M3 against whatever string was in the textbox — usually a guess
+    /// since the TV hadn't shown anything yet — and the TV silently
+    /// rejected with a short error TLV, clearing the PIN from the screen.
+    /// </summary>
     public async Task<HapCredentials> RunAsync(
-        string pin,
+        Func<Task<string>> getPinAsync,
         byte[] clientPairingId,
         byte[]? clientSeed = null,
         string? displayName = null,
@@ -181,7 +197,7 @@ public sealed class CompanionPairSetup
 
         var srp = new Srp6aClient();
         srp.Initialize(clientSeed);   // pyatv uses signing-key bytes as the SRP `a`; harmless re-use
-        srp.SetPin(pin);
+        // PIN is fetched AFTER M2 arrives; can't SetPin yet.
 
         // ── frame-receive plumbing ──
         var pending = new Queue<byte[]>();
@@ -229,6 +245,23 @@ public sealed class CompanionPairSetup
                 !m2.TryGetValue((byte)Tlv8Tag.PublicKey, out var atvPub))
                 throw new HapPairingException("M2 reply missing salt or public-key");
             Log($"M2 OK — salt={atvSalt.Length}B, B={atvPub.Length}B");
+            Log("Apple TV is now displaying a PIN — read it off the TV screen");
+
+            // ── prompt the user for the PIN they can now see on the TV ──
+            string pin;
+            try
+            {
+                pin = await getPinAsync().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                Log("PIN entry cancelled");
+                throw;
+            }
+            if (string.IsNullOrEmpty(pin))
+                throw new HapPairingException("PIN entry was cancelled or empty");
+            srp.SetPin(pin);
+            Log($"got PIN ({pin.Length} chars), computing SRP proof");
 
             // ── M3 → ── ── M4 ← ──
             var (A, M1proof) = srp.ProcessChallenge(atvSalt, atvPub);

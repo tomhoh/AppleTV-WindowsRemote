@@ -69,7 +69,16 @@ public sealed partial class PairingWindow : WindowEx
     {
         StopDiscovery();
         _devices.Clear();
-        SetStage1();
+        // Stage-1 visibility reset (was SetStage1):
+        ListPanel.Visibility = Visibility.Visible;
+        PinPanel .Visibility = Visibility.Collapsed;
+        PinError .Visibility = Visibility.Collapsed;
+        BackBtn  .Visibility = Visibility.Collapsed;
+        PairBtn  .Visibility = Visibility.Collapsed;
+        RescanBtn.Visibility = Visibility.Visible;
+        CancelBtn.Visibility = Visibility.Visible;
+        PairLogScroll.Visibility = Visibility.Collapsed;
+        PairProgress.Visibility  = Visibility.Collapsed;
         HeaderText.Text = "Pair Apple TV";
         SubText   .Text = "Looking for Apple TVs on your network…";
 
@@ -209,9 +218,7 @@ public sealed partial class PairingWindow : WindowEx
                 UpdateDeviceListVisibility();
                 return;
             }
-            _picked = dev;
-            StopDiscovery();
-            SetStage2(dev);
+            StartPairFor(dev);
         }
         catch (Exception ex)
         {
@@ -227,7 +234,10 @@ public sealed partial class PairingWindow : WindowEx
         }
     }
 
-    // ─── Stage 2: PIN entry ────────────────────────────────────────
+    // ─── Pair flow (Connecting → PIN-on-TV → Enter PIN → Done) ──────
+
+    private TaskCompletionSource<string>? _pinTcs;
+    private CancellationTokenSource? _pairCts;
 
     private async void OnDeviceSelected(object sender, SelectionChangedEventArgs e)
     {
@@ -246,97 +256,138 @@ public sealed partial class PairingWindow : WindowEx
             await dlg.ShowAsync();
             return;
         }
+        StartPairFor(d);
+    }
+
+    private void StartPairFor(AppleTVDevice d)
+    {
         _picked = d;
         StopDiscovery();
-        SetStage2(d);
-    }
 
-    private void SetStage1()
-    {
-        ListPanel.Visibility = Visibility.Visible;
-        PinPanel .Visibility = Visibility.Collapsed;
-        PinError .Visibility = Visibility.Collapsed;
-        BackBtn  .Visibility = Visibility.Collapsed;
-        PairBtn  .Visibility = Visibility.Collapsed;
-        RescanBtn.Visibility = Visibility.Visible;
-        CancelBtn.Visibility = Visibility.Visible;
-    }
-
-    private void SetStage2(AppleTVDevice device)
-    {
         ListPanel.Visibility = Visibility.Collapsed;
-        PinPanel .Visibility = Visibility.Visible;
+        PinPanel .Visibility = Visibility.Collapsed;   // hidden until M2
         BackBtn  .Visibility = Visibility.Visible;
-        PairBtn  .Visibility = Visibility.Visible;
+        PairBtn  .Visibility = Visibility.Collapsed;   // shown when M2 arrives
         RescanBtn.Visibility = Visibility.Collapsed;
         CancelBtn.Visibility = Visibility.Collapsed;
 
-        HeaderText.Text = $"Pair “{device.Name}”";
-        SubText   .Text = $"{device.Address}:{device.Port}";
-        PinPrompt .Text = "Enter the 4-digit PIN shown on your Apple TV.";
-        PinBox.Text = string.Empty;
-        PairBtn.IsEnabled = false;
-        PinBox.Focus(FocusState.Programmatic);
-    }
+        HeaderText.Text = $"Connecting to {d.Name}…";
+        SubText.Text    = $"{d.AddressString}:{d.Port}   ·   {d.ModelFriendly}";
 
-    private async void OnBackClicked(object sender, RoutedEventArgs e)
-    {
-        _picked = null;
-        DeviceList.SelectedItem = null;
-        await StartDiscoveryAsync();
-    }
-
-    private void OnCancelClicked(object sender, RoutedEventArgs e) => this.Close();
-
-    private async void OnPairClicked(object sender, RoutedEventArgs e)
-    {
-        if (_picked is null) return;
-        var pin = (PinBox.Text ?? string.Empty).Trim();
-        if (string.IsNullOrEmpty(pin)) { ShowPinError("PIN is required."); return; }
-
-        SetBusy(true);
         PairLog.Text = string.Empty;
         PairLogScroll.Visibility = Visibility.Visible;
+        PairProgress.Visibility  = Visibility.Visible;
+
+        _pinTcs  = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pairCts = new CancellationTokenSource();
+        _ = RunPairSetupAsync(d, _pinTcs, _pairCts.Token);
+    }
+
+    private async Task RunPairSetupAsync(AppleTVDevice dev, TaskCompletionSource<string> pinTcs, CancellationToken ct)
+    {
         var dq = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         void AppendLog(string msg) =>
-            dq?.TryEnqueue(() =>
-            {
-                PairLog.Text += $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n";
-            });
+            dq?.TryEnqueue(() => { PairLog.Text += $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n"; });
+
         try
         {
-            AppendLog($"connecting to {_picked.AddressString}:{_picked.Port} (TCP)…");
-            await using var conn = new CompanionConnection(_picked.Address.ToString(), _picked.Port);
-            await conn.ConnectAsync();
-            AppendLog("TCP connected, starting pair-setup");
+            AppendLog($"connecting to {dev.AddressString}:{dev.Port} (TCP)…");
+            await using var conn = new CompanionConnection(dev.Address.ToString(), dev.Port);
+            await conn.ConnectAsync(ct);
+            AppendLog("TCP connected, sending M1 to wake PIN display");
 
             var pairingId = Encoding.ASCII.GetBytes(Guid.NewGuid().ToString());
-            var setup = new CompanionPairSetup(conn, timeout: TimeSpan.FromSeconds(30));
-            var creds = await setup.RunAsync(pin, pairingId,
-                                              clientSeed: null,
-                                              displayName: _picked.Name,
-                                              onProgress: AppendLog);
+            var setup = new CompanionPairSetup(conn, timeout: TimeSpan.FromMinutes(2));
+            var creds = await setup.RunAsync(
+                getPinAsync: async () =>
+                {
+                    dq?.TryEnqueue(() =>
+                    {
+                        HeaderText.Text = $"Read the PIN from {dev.Name}";
+                        SubText.Text    = "Type it below and click Pair.";
+                        PinPanel.Visibility = Visibility.Visible;
+                        PairBtn .Visibility = Visibility.Visible;
+                        PinPrompt.Text = "Enter the 4-digit PIN shown on your Apple TV.";
+                        PinBox.Text = string.Empty;
+                        PinBox.IsEnabled = true;
+                        PairBtn.IsEnabled = false;   // re-enabled when 4 digits typed
+                        PairProgress.Visibility = Visibility.Collapsed;
+                        PinBox.Focus(FocusState.Programmatic);
+                    });
+                    var pin = await pinTcs.Task.WaitAsync(ct);
+                    dq?.TryEnqueue(() =>
+                    {
+                        PinBox.IsEnabled = false;
+                        PairBtn.IsEnabled = false;
+                        PairProgress.Visibility = Visibility.Visible;
+                    });
+                    return pin;
+                },
+                clientPairingId: pairingId,
+                clientSeed: null,
+                displayName: dev.Name,
+                onProgress: AppendLog,
+                cancel: ct);
 
             var deviceId = Convert.ToHexString(creds.AtvIdentifier).ToLowerInvariant();
             PairedCredentials = new StoredCredentials(
                 DeviceId:    deviceId,
-                DisplayName: _picked.Name,
+                DisplayName: dev.Name,
                 Credentials: creds,
                 PairedAtUtc: DateTime.UtcNow,
-                Host:        _picked.Address.ToString(),
-                Port:        _picked.Port);
-
+                Host:        dev.Address.ToString(),
+                Port:        dev.Port);
             new CredentialStore().Save(PairedCredentials);
-            this.Close();
+
+            dq?.TryEnqueue(() => this.Close());
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog("pair-setup cancelled");
         }
         catch (Exception ex)
         {
-            ShowPinError(BuildErrorMessage(ex));
+            dq?.TryEnqueue(() =>
+            {
+                ShowPinError(BuildErrorMessage(ex));
+                PairProgress.Visibility = Visibility.Collapsed;
+            });
         }
-        finally
-        {
-            SetBusy(false);
-        }
+    }
+
+    private void OnBackClicked(object sender, RoutedEventArgs e)
+    {
+        _pairCts?.Cancel();
+        _pinTcs?.TrySetCanceled();
+        _picked = null;
+        DeviceList.SelectedItem = null;
+
+        ListPanel.Visibility = Visibility.Visible;
+        PinPanel .Visibility = Visibility.Collapsed;
+        BackBtn  .Visibility = Visibility.Collapsed;
+        PairBtn  .Visibility = Visibility.Collapsed;
+        PairLogScroll.Visibility = Visibility.Collapsed;
+        PairProgress.Visibility  = Visibility.Collapsed;
+        RescanBtn.Visibility = Visibility.Visible;
+        CancelBtn.Visibility = Visibility.Visible;
+        PinError.Visibility = Visibility.Collapsed;
+        UpdateDeviceListVisibility();
+
+        _ = StartDiscoveryAsync();
+    }
+
+    private void OnCancelClicked(object sender, RoutedEventArgs e) => this.Close();
+
+    /// <summary>
+    /// User clicked Pair after entering the PIN. The actual pair-setup
+    /// state machine is already running in the background — all we do
+    /// here is unblock its getPinAsync by resolving the TCS.
+    /// </summary>
+    private void OnPairClicked(object sender, RoutedEventArgs e)
+    {
+        var pin = (PinBox.Text ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(pin)) { ShowPinError("PIN is required."); return; }
+        _pinTcs?.TrySetResult(pin);
     }
 
     /// <summary>

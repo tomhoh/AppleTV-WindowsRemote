@@ -110,7 +110,7 @@ public class PairSetupTests
         var driverCts = new CancellationTokenSource();
         var pairSetup = new CompanionPairSetup(conn, timeout: TimeSpan.FromSeconds(1));
         var runTask = pairSetup.RunAsync(
-            pin: "1234",
+            getPinAsync: () => Task.FromResult("1234"),
             clientPairingId: Encoding.ASCII.GetBytes("client-uuid"),
             clientSeed: new byte[32].Select((_, i) => (byte)i).ToArray(),
             cancel: driverCts.Token);
@@ -151,7 +151,7 @@ public class PairSetupTests
         var pairSetup = new CompanionPairSetup(conn, timeout: TimeSpan.FromMilliseconds(100));
         var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => pairSetup.RunAsync(
-                pin: "1234",
+                getPinAsync: () => Task.FromResult("1234"),
                 clientPairingId: Encoding.ASCII.GetBytes("client-uuid"),
                 clientSeed: new byte[32]));
         Assert.NotNull(ex);
@@ -191,7 +191,7 @@ public class PairSetupTests
         var pairSetup = new CompanionPairSetup(conn);
         var ex = await Assert.ThrowsAsync<HapPairingException>(
             () => pairSetup.RunAsync(
-                pin: "9999",
+                getPinAsync: () => Task.FromResult("9999"),
                 clientPairingId: Encoding.ASCII.GetBytes("client-uuid"),
                 clientSeed: new byte[32]));
 

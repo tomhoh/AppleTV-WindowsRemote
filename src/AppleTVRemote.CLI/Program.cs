@@ -160,20 +160,25 @@ static async Task<int> PairCommand(string[] args)
         return 3;
     }
 
-    Console.Write("PIN displayed on your Apple TV: ");
-    string? pin = Console.ReadLine()?.Trim();
-    if (string.IsNullOrEmpty(pin))
-    {
-        Console.Error.WriteLine("PIN required");
-        return 2;
-    }
-
     var pairingId = System.Text.Encoding.ASCII.GetBytes(Guid.NewGuid().ToString());
     var setup = new CompanionPairSetup(conn, timeout: TimeSpan.FromSeconds(30));
     HapCredentials creds;
     try
     {
-        creds = await setup.RunAsync(pin, pairingId, clientSeed: null, displayName: name);
+        // PIN is prompted only AFTER M2 — the TV needs to receive M1
+        // before it displays the PIN on screen. Asking earlier would
+        // mean the user is guessing.
+        creds = await setup.RunAsync(
+            getPinAsync: () =>
+            {
+                Console.WriteLine();
+                Console.Write("PIN displayed on your Apple TV: ");
+                var pin = Console.ReadLine()?.Trim() ?? string.Empty;
+                return Task.FromResult(pin);
+            },
+            clientPairingId: pairingId,
+            clientSeed: null,
+            displayName: name);
     }
     catch (HapPairingException ex)
     {
