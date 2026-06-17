@@ -548,7 +548,9 @@ public sealed partial class MainWindow : WindowEx
             // ~35 s after the missing _touchStart — exactly the symptom in
             // the user-supplied wire log after v0.1.26.
             var clientIdString = System.Text.Encoding.ASCII.GetString(selected.Credentials.ClientIdentifier);
-            await _session.SendSessionInitAsync(clientIdString, Environment.MachineName ?? "Windows Remote");
+            // Match Swift sibling's _systemInfo: it sends "Mac Remote" as the
+            // device name. Pair-setup M5 also hardcodes the same name in v0.1.35.
+            await _session.SendSessionInitAsync(clientIdString, "Mac Remote");
             return _session;
         }
         catch (Exception ex)

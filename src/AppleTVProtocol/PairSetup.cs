@@ -292,8 +292,14 @@ public sealed class CompanionPairSetup
             //
             // Fall back to a sensible default (machine name) so we never
             // emit a frame without it.
+            // Match the Swift sibling exactly: it hardcodes "Mac Remote" as
+            // the controller display name regardless of the actual host. The
+            // user reports the Swift app's app-launcher works on this TV but
+            // ours doesn't even after every wire-format fix; the controller
+            // record's display name is the last meaningful difference left.
+            // Worth testing — costs nothing but a re-pair.
             var nameForController = string.IsNullOrEmpty(displayName)
-                ? (Environment.MachineName ?? "Windows Remote")
+                ? "Mac Remote"
                 : displayName;
 
             var innerTlvEntries = new Dictionary<byte, byte[]>
