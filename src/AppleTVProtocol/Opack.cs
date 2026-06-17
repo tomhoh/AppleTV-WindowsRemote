@@ -266,14 +266,25 @@ public static class Opack
 
     private static byte[] EncodeDictionary(System.Collections.IDictionary dict, List<byte[]> objectList)
     {
-        var bodyStream = new MemoryStream();
-        int count = 0;
+        // Sort string keys alphabetically before emitting, matching the Swift
+        // sibling's OPACK encoder. The user's tvOS empirically silently drops
+        // FetchLaunchableApplicationsEvent when keys are in insertion order
+        // (same byte content, same field set as pyatv) but responds normally
+        // when keys are sorted — Swift works against the same TV, our v0.1.32
+        // didn't, only difference is key order on the wire.
+        var entries = new List<(object key, object? value)>(dict.Count);
         foreach (System.Collections.DictionaryEntry kv in dict)
+            entries.Add((kv.Key, kv.Value));
+        if (entries.Count > 0 && entries.TrueForAll(e => e.key is string))
+            entries.Sort((a, b) => string.CompareOrdinal((string)a.key, (string)b.key));
+
+        var bodyStream = new MemoryStream();
+        foreach (var (k, v) in entries)
         {
-            PackInternal(kv.Key,   bodyStream, objectList);
-            PackInternal(kv.Value, bodyStream, objectList);
-            count++;
+            PackInternal(k, bodyStream, objectList);
+            PackInternal(v, bodyStream, objectList);
         }
+        int count = entries.Count;
         byte tag = (byte)(0xE0 + Math.Min(count, 0xF));
         byte[] body = bodyStream.ToArray();
         bool endless = count >= 0xF;
