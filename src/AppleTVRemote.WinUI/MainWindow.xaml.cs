@@ -525,6 +525,15 @@ public sealed partial class MainWindow : WindowEx
         try
         {
             var conn = new CompanionConnection(selected.Host, selected.Port);
+            // If the TV closes the socket (decryption failure, idle timeout,
+            // reboot) drop our cached session so the next button press
+            // rebuilds it instead of timing out against a dead connection.
+            conn.Closed += (_, _) =>
+            {
+                _session = null;
+                _conn = null;
+                _activeDevice = null;
+            };
             await conn.ConnectAsync();
             await new CompanionPairVerify(conn).RunAsync(selected.Credentials);
             _conn          = conn;

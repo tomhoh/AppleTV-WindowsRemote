@@ -30,6 +30,13 @@ public sealed class CompanionConnection : IAsyncDisposable
     private Task? _readLoop;
     private CompanionCipher? _cipher;
 
+    // Serializes the (encrypt → write) critical section so two concurrent
+    // SendAsync callers (e.g. user-thread HID click + threadpool keepalive
+    // timer) can't race the cipher nonce counter and produce frames the
+    // peer can't decrypt. Without this the ATV closes the socket on the
+    // first corrupted frame and every subsequent send appears to hang.
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
+
     /// <summary>Frame received from the peer. Fires on the read-loop thread.</summary>
     public event EventHandler<CompanionFrame>? FrameReceived;
 
@@ -77,23 +84,34 @@ public sealed class CompanionConnection : IAsyncDisposable
     {
         if (_stream is null) throw new InvalidOperationException("not connected");
 
-        byte[] wireBytes;
-        if (_cipher is not null && payload.Length > 0)
+        await _sendLock.WaitAsync(cancel).ConfigureAwait(false);
+        try
         {
-            // Encrypted: header AAD covers ciphertext + tag length
-            int wirePayloadLength = payload.Length + CompanionFrame.AuthTagLength;
-            var header = CompanionFrame.EncodeHeader(type, wirePayloadLength);
-            var ct = _cipher.Encrypt(payload, header);
-            wireBytes = new byte[header.Length + ct.Length];
-            Buffer.BlockCopy(header, 0, wireBytes, 0, header.Length);
-            Buffer.BlockCopy(ct, 0, wireBytes, header.Length, ct.Length);
-        }
-        else
-        {
-            wireBytes = CompanionFrame.EncodeFrame(type, payload);
-        }
+            byte[] wireBytes;
+            if (_cipher is not null && payload.Length > 0)
+            {
+                // Encrypted: header AAD covers ciphertext + tag length.
+                // Nonce-counter increment lives inside _cipher.Encrypt; it must
+                // be serialized with the matching stream-write below so the
+                // peer sees an unbroken nonce sequence on the wire.
+                int wirePayloadLength = payload.Length + CompanionFrame.AuthTagLength;
+                var header = CompanionFrame.EncodeHeader(type, wirePayloadLength);
+                var ct = _cipher.Encrypt(payload, header);
+                wireBytes = new byte[header.Length + ct.Length];
+                Buffer.BlockCopy(header, 0, wireBytes, 0, header.Length);
+                Buffer.BlockCopy(ct, 0, wireBytes, header.Length, ct.Length);
+            }
+            else
+            {
+                wireBytes = CompanionFrame.EncodeFrame(type, payload);
+            }
 
-        await _stream.WriteAsync(wireBytes, cancel).ConfigureAwait(false);
+            await _stream.WriteAsync(wireBytes, cancel).ConfigureAwait(false);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
     }
 
     private async Task ReadLoopAsync(CancellationToken cancel)
