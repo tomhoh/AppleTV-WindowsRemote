@@ -191,6 +191,17 @@ public sealed class CompanionPairVerify
             await _conn.SendAsync(CompanionFrameType.PV_Next, PairVerifyMessages.BuildM3(encryptedM3), cancel)
                 .ConfigureAwait(false);
 
+            // ── ← M4 ── (CRITICAL: wait for the TV's M4 ack BEFORE enabling
+            // encryption. Without this we install session keys immediately
+            // after sending M3, then any frame the TV sends next — including
+            // its still-cleartext M4 — hits the read loop in encrypted mode
+            // and fails to decrypt, tearing down the session before the first
+            // command even goes out. Mirrors Swift PairingFlow.swift:149-156
+            // and pyatv exchange_auth(M3) → waits for response → derive keys.)
+            var m4 = await AwaitReplyAsync().ConfigureAwait(false);
+            if (m4.TryGetValue((byte)Tlv8Tag.Error, out var errBytes))
+                throw new HapPairingException($"pair-verify M4 rejected by ATV (error=0x{(errBytes.Length > 0 ? errBytes[0] : 0):x2})");
+
             // ── derive long-lived session keys + install ──
             var outKey = Crypto.HkdfSha512(shared, SessionSalt, OutInfoLabel);
             var inKey  = Crypto.HkdfSha512(shared, SessionSalt, InInfoLabel);

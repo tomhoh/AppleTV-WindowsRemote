@@ -134,6 +134,19 @@ public class PairVerifyTests
                 var clientSigInput = Concat(clientVerifyPub, _clientIdentifier, serverVerifyPub);
                 if (!_clientLtpk.Verify(clientSigInput, clientSig))
                     throw new InvalidOperationException("client signature did not verify");
+
+                // ── Send M4 (success ack — no Error tag) ──
+                // Real ATVs send this CLEARTEXT before either side starts
+                // using session keys; the driver must wait for it.
+                var outerM4 = Tlv8.Write(new Dictionary<byte, byte[]>
+                {
+                    { (byte)Tlv8Tag.SeqNo, new[] { (byte)Tlv8State.M4 } },
+                });
+                var envelopeM4 = Opack.Pack(new Dictionary<string, object?>
+                {
+                    { PairVerifyMessages.PairingDataKey, outerM4 },
+                });
+                await stream.WriteAsync(CompanionFrame.EncodeFrame(CompanionFrameType.PV_Next, envelopeM4));
             });
         }
 
