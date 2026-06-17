@@ -393,11 +393,38 @@ public sealed class CompanionSession : IAsyncDisposable
             var (unpacked, _) = Opack.Unpack(frame.Payload);
             dict = ConvertToStringKeyed(unpacked);
         }
-        catch { return; }
-        if (dict is null) return;
+        catch (Exception ex)
+        {
+            // Surface decoder failures into the trace — silent drops were
+            // exactly the failure mode for the launcher: a 6 KB app-list
+            // response that our OPACK reader choked on, and the request
+            // timed out as "Couldn't load apps" with no visible cause.
+            if (CompanionTrace.IsEnabled)
+            {
+                CompanionTrace.Write("RECV", $"Opack.Unpack threw: {ex.GetType().Name}: {ex.Message}");
+                CompanionTrace.WriteBytes("RECV", "undecoded payload", frame.Payload, maxBytes: 256);
+            }
+            return;
+        }
+        if (dict is null)
+        {
+            if (CompanionTrace.IsEnabled)
+                CompanionTrace.Write("RECV", $"frame decoded but top-level dict had non-string keys, dropped ({frame.Payload.Length}B)");
+            return;
+        }
 
-        if (!dict.TryGetValue("_t", out var typeBoxed)) return;
-        if (UnboxInt(typeBoxed) is not { } type) return;
+        if (!dict.TryGetValue("_t", out var typeBoxed))
+        {
+            if (CompanionTrace.IsEnabled)
+                CompanionTrace.Write("RECV", $"frame decoded, no _t key (keys: {string.Join(",", dict.Keys)}), {frame.Payload.Length}B");
+            return;
+        }
+        if (UnboxInt(typeBoxed) is not { } type)
+        {
+            if (CompanionTrace.IsEnabled)
+                CompanionTrace.Write("RECV", $"frame has _t but couldn't unbox to int (type={typeBoxed?.GetType().Name}), {frame.Payload.Length}B");
+            return;
+        }
         dict.TryGetValue("_x", out var xidBoxed);
         int? xid = UnboxInt(xidBoxed);
         dict.TryGetValue("_i", out var idBoxed);
@@ -421,9 +448,22 @@ public sealed class CompanionSession : IAsyncDisposable
                 return;
 
             case CompanionMessageType.Response:
-                if (xid is not int respXid) return;
+                if (xid is not int respXid)
+                {
+                    if (CompanionTrace.IsEnabled)
+                        CompanionTrace.Write("RECV", $"response had no _x, dropped ({frame.Payload.Length}B, identifier='{identifier}')");
+                    return;
+                }
                 if (_pending.TryRemove(respXid, out var tcs))
+                {
                     tcs.TrySetResult(dict);
+                    if (CompanionTrace.IsEnabled)
+                        CompanionTrace.Write("RECV", $"dispatched response xid=0x{respXid:x8} ({frame.Payload.Length}B)");
+                }
+                else if (CompanionTrace.IsEnabled)
+                {
+                    CompanionTrace.Write("RECV", $"response xid=0x{respXid:x8} has no pending request, dropped ({frame.Payload.Length}B)");
+                }
 
                 // When _sessionStart's response arrives, subscribe to events
                 // so the ATV pushes us periodic state updates — that inbound
