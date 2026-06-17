@@ -8,6 +8,8 @@
 // updates the popup instantly without a restart.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -505,5 +507,210 @@ public partial class MainWindow : Window
         _session = null;
         _conn = null;
         _activeDevice = null;
+    }
+
+    // ─── App launcher (slides out to the left) ─────────────────────
+
+    private const double LauncherPanelWidth = 200;
+    private const double RemoteWidth        = 200;
+
+    /// <summary>Last-fetched app list, cached so opening the launcher is instant after the first session.</summary>
+    private IReadOnlyDictionary<string, string>? _cachedApps;
+    private string? _launcherFilter;
+    private bool    _launcherOpen;
+
+    private async void OnAppsClicked(object sender, RoutedEventArgs e)
+    {
+        if (_launcherOpen) { CloseLauncher(); return; }
+
+        var session = await EnsureSessionAsync();
+        if (session is null) return;   // EnsureSessionAsync already showed the error
+
+        OpenLauncher();
+        if (_cachedApps is null) await FetchAppsAsync(session);
+    }
+
+    private void OnLauncherCloseClicked(object sender, RoutedEventArgs e) => CloseLauncher();
+
+    private void OnLauncherSearchChanged(object sender, TextChangedEventArgs e)
+    {
+        _launcherFilter = LauncherSearch.Text?.Trim();
+        RenderApps();
+    }
+
+    private void OpenLauncher()
+    {
+        _launcherOpen = true;
+        LauncherPanel.Visibility = Visibility.Visible;
+        AnimateLauncher(LauncherPanelWidth);
+    }
+
+    private void CloseLauncher()
+    {
+        _launcherOpen = false;
+        AnimateLauncher(0, onCompleted: () => LauncherPanel.Visibility = Visibility.Collapsed);
+    }
+
+    private void AnimateLauncher(double targetWidth, Action? onCompleted = null)
+    {
+        // Animate both the launcher column AND the window width together so
+        // the remote stays anchored to the right edge of the popup.
+        var colAnim = new DoubleAnimation
+        {
+            To = targetWidth,
+            Duration = new Duration(TimeSpan.FromMilliseconds(180)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        var winAnim = new DoubleAnimation
+        {
+            To = RemoteWidth + targetWidth,
+            Duration = colAnim.Duration,
+            EasingFunction = colAnim.EasingFunction,
+        };
+        if (onCompleted is not null)
+            winAnim.Completed += (_, _) => onCompleted();
+
+        // GridLength is not animatable, so we drive the column via its underlying Width
+        // through a DoubleAnimation on a Storyboard target.
+        LauncherCol.Width = new GridLength(targetWidth);  // snap (animations on GridLength are awkward)
+        BeginAnimation(WidthProperty, winAnim);
+    }
+
+    private async Task FetchAppsAsync(CompanionSession session)
+    {
+        LauncherStatus.Text = "Loading apps…";
+        LauncherStatus.Visibility = Visibility.Visible;
+        LauncherList.Visibility   = Visibility.Collapsed;
+        try
+        {
+            var apps = await session.ListAppsAsync();
+            _cachedApps = apps;
+            RenderApps();
+        }
+        catch (Exception ex)
+        {
+            LauncherStatus.Text = $"Couldn't load apps: {ex.Message}";
+        }
+    }
+
+    private void RenderApps()
+    {
+        if (_cachedApps is null) return;
+        var q = _launcherFilter ?? string.Empty;
+        var filtered = _cachedApps
+            .Where(kv => string.IsNullOrEmpty(q) ||
+                         (kv.Value ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        LauncherList.Items.Clear();
+        foreach (var kv in filtered)
+            LauncherList.Items.Add(BuildAppTile(kv.Key, kv.Value));
+
+        if (filtered.Count == 0)
+        {
+            LauncherStatus.Text = _cachedApps.Count == 0 ? "No apps reported by Apple TV"
+                                                         : "No matches";
+            LauncherStatus.Visibility = Visibility.Visible;
+            LauncherList.Visibility   = Visibility.Collapsed;
+        }
+        else
+        {
+            LauncherStatus.Visibility = Visibility.Collapsed;
+            LauncherList.Visibility   = Visibility.Visible;
+        }
+    }
+
+    private FrameworkElement BuildAppTile(string bundleId, string name)
+    {
+        var (top, bottom) = ColorPairFor(bundleId);
+        var initial = string.IsNullOrWhiteSpace(name) ? "?"
+                    : char.ToUpperInvariant(name.Trim()[0]).ToString();
+
+        var tile = new Border
+        {
+            Width = 48, Height = 48,
+            CornerRadius = new CornerRadius(11),
+            Margin = new Thickness(0, 4, 0, 2),
+            Background = new LinearGradientBrush(top, bottom, new Point(0, 0), new Point(1, 1)),
+            Child = new TextBlock
+            {
+                Text = initial,
+                FontSize = 22,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment   = VerticalAlignment.Center,
+            },
+        };
+
+        var label = new TextBlock
+        {
+            Text = name,
+            FontSize = 10,
+            Foreground = (Brush)FindResource("ButtonGlyph"),
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxHeight = 28,
+            Margin = new Thickness(2, 2, 2, 0),
+        };
+
+        var cell = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Cursor = Cursors.Hand,
+            ToolTip = $"{name}\n{bundleId}",
+        };
+        cell.Children.Add(tile);
+        cell.Children.Add(label);
+        cell.MouseLeftButtonUp += async (_, _) => await LaunchAppAsync(bundleId, name);
+        return cell;
+    }
+
+    private async Task LaunchAppAsync(string bundleId, string displayName)
+    {
+        try
+        {
+            var session = await EnsureSessionAsync();
+            if (session is null) return;
+            await session.LaunchAppAsync(bundleId);
+            CloseLauncher();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Launching {displayName} failed: {ex.Message}",
+                "Apple TV Remote", MessageBoxButton.OK, MessageBoxImage.Error);
+            await TeardownActiveAsync();
+        }
+    }
+
+    /// <summary>Deterministic gradient per bundle id — same app always gets the same tile colour.</summary>
+    private static (Color top, Color bottom) ColorPairFor(string bundleId)
+    {
+        int hash = 0;
+        foreach (var c in bundleId) hash = unchecked(hash * 31 + c);
+        var hue = (Math.Abs(hash) % 360) / 360.0;
+        return (HsvToRgb(hue, 0.55, 0.82), HsvToRgb(hue, 0.70, 0.55));
+    }
+
+    private static Color HsvToRgb(double h, double s, double v)
+    {
+        int hi = (int)Math.Floor(h * 6) % 6;
+        double f = h * 6 - Math.Floor(h * 6);
+        double p = v * (1 - s);
+        double q = v * (1 - f * s);
+        double t = v * (1 - (1 - f) * s);
+        (double r, double g, double b) = hi switch
+        {
+            0 => (v, t, p),
+            1 => (q, v, p),
+            2 => (p, v, t),
+            3 => (p, q, v),
+            4 => (t, p, v),
+            _ => (v, p, q),
+        };
+        return Color.FromRgb((byte)(r * 255), (byte)(g * 255), (byte)(b * 255));
     }
 }

@@ -574,4 +574,198 @@ public sealed partial class MainWindow : WindowEx
         };
         await dlg.ShowAsync();
     }
+
+    // ─── App launcher (slides out to the left) ─────────────────────
+
+    private const int LauncherPanelWidth = 200;
+    private const int RemoteWidth        = 200;
+
+    private System.Collections.Generic.IReadOnlyDictionary<string, string>? _cachedApps;
+    private string? _launcherFilter;
+    private bool    _launcherOpen;
+
+    private async void OnAppsClicked(object sender, RoutedEventArgs e)
+    {
+        if (_launcherOpen) { CloseLauncher(); return; }
+
+        var session = await EnsureSessionAsync();
+        if (session is null) return;
+
+        OpenLauncher();
+        if (_cachedApps is null) await FetchAppsAsync(session);
+    }
+
+    private void OnLauncherCloseClicked(object sender, RoutedEventArgs e) => CloseLauncher();
+
+    private void OnLauncherSearchChanged(object sender, TextChangedEventArgs e)
+    {
+        _launcherFilter = LauncherSearch.Text?.Trim();
+        RenderApps();
+    }
+
+    private void OpenLauncher()
+    {
+        _launcherOpen = true;
+        LauncherPanel.Visibility = Visibility.Visible;
+        LauncherCol.Width = new GridLength(LauncherPanelWidth);
+        // WinUIEx WindowEx exposes Width/Height as DIPs.
+        Width = RemoteWidth + LauncherPanelWidth;
+    }
+
+    private void CloseLauncher()
+    {
+        _launcherOpen = false;
+        LauncherCol.Width = new GridLength(0);
+        Width = RemoteWidth;
+        LauncherPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private async Task FetchAppsAsync(CompanionSession session)
+    {
+        LauncherStatus.Text = "Loading apps…";
+        LauncherStatus.Visibility = Visibility.Visible;
+        LauncherList.Visibility   = Visibility.Collapsed;
+        try
+        {
+            var apps = await session.ListAppsAsync();
+            _cachedApps = apps;
+            RenderApps();
+        }
+        catch (Exception ex)
+        {
+            LauncherStatus.Text = $"Couldn't load apps: {ex.Message}";
+        }
+    }
+
+    private void RenderApps()
+    {
+        if (_cachedApps is null) return;
+        var q = _launcherFilter ?? string.Empty;
+        var filtered = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, string>>();
+        foreach (var kv in _cachedApps)
+        {
+            var name = kv.Value ?? string.Empty;
+            if (q.Length == 0 || name.Contains(q, StringComparison.OrdinalIgnoreCase))
+                filtered.Add(kv);
+        }
+        filtered.Sort((a, b) => string.Compare(a.Value, b.Value, StringComparison.OrdinalIgnoreCase));
+
+        LauncherList.Items.Clear();
+        foreach (var kv in filtered)
+            LauncherList.Items.Add(BuildAppTile(kv.Key, kv.Value));
+
+        if (filtered.Count == 0)
+        {
+            LauncherStatus.Text = _cachedApps.Count == 0 ? "No apps reported by Apple TV"
+                                                         : "No matches";
+            LauncherStatus.Visibility = Visibility.Visible;
+            LauncherList.Visibility   = Visibility.Collapsed;
+        }
+        else
+        {
+            LauncherStatus.Visibility = Visibility.Collapsed;
+            LauncherList.Visibility   = Visibility.Visible;
+        }
+    }
+
+    private FrameworkElement BuildAppTile(string bundleId, string name)
+    {
+        var (top, bottom) = ColorPairFor(bundleId);
+        var initial = string.IsNullOrWhiteSpace(name) ? "?"
+                    : char.ToUpperInvariant(name.Trim()[0]).ToString();
+
+        var tile = new Border
+        {
+            Width = 48, Height = 48,
+            CornerRadius = new CornerRadius(11),
+            Margin = new Thickness(0, 4, 0, 2),
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint   = new Point(1, 1),
+                GradientStops =
+                {
+                    new GradientStop { Offset = 0, Color = top    },
+                    new GradientStop { Offset = 1, Color = bottom },
+                },
+            },
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = initial,
+                FontSize = 22,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Colors.White),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment   = VerticalAlignment.Center,
+            },
+        };
+
+        var label = new TextBlock
+        {
+            Text = name,
+            FontSize = 10,
+            Foreground = (Brush)Root.Resources["ButtonGlyph"],
+            TextAlignment  = TextAlignment.Center,
+            TextWrapping   = TextWrapping.Wrap,
+            TextTrimming   = TextTrimming.CharacterEllipsis,
+            MaxHeight      = 26,
+            Margin         = new Thickness(2, 2, 2, 0),
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+
+        var cell = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(cell, $"{name}\n{bundleId}");
+        cell.Children.Add(tile);
+        cell.Children.Add(label);
+        cell.PointerReleased += async (_, _) => await LaunchAppAsync(bundleId, name);
+        return cell;
+    }
+
+    private async Task LaunchAppAsync(string bundleId, string displayName)
+    {
+        try
+        {
+            var session = await EnsureSessionAsync();
+            if (session is null) return;
+            await session.LaunchAppAsync(bundleId);
+            CloseLauncher();
+        }
+        catch (Exception ex)
+        {
+            await ShowMessageAsync($"Launching {displayName} failed: {ex.Message}");
+            await TeardownActiveAsync();
+        }
+    }
+
+    private static (Color top, Color bottom) ColorPairFor(string bundleId)
+    {
+        int hash = 0;
+        foreach (var c in bundleId) hash = unchecked(hash * 31 + c);
+        var hue = (Math.Abs(hash) % 360) / 360.0;
+        return (HsvToRgb(hue, 0.55, 0.82), HsvToRgb(hue, 0.70, 0.55));
+    }
+
+    private static Color HsvToRgb(double h, double s, double v)
+    {
+        int hi = (int)Math.Floor(h * 6) % 6;
+        double f = h * 6 - Math.Floor(h * 6);
+        double p = v * (1 - s);
+        double q = v * (1 - f * s);
+        double t = v * (1 - (1 - f) * s);
+        (double r, double g, double b) = hi switch
+        {
+            0 => (v, t, p),
+            1 => (q, v, p),
+            2 => (p, v, t),
+            3 => (p, q, v),
+            4 => (t, p, v),
+            _ => (v, p, q),
+        };
+        return Color.FromArgb(0xFF, (byte)(r * 255), (byte)(g * 255), (byte)(b * 255));
+    }
 }

@@ -123,6 +123,84 @@
         </Border.Effect>
 
         <Grid>
+            <Grid.ColumnDefinitions>
+                <!-- Launcher column animates 0 → 200 when toggled open. -->
+                <ColumnDefinition x:Name="LauncherCol" Width="0" />
+                <ColumnDefinition Width="200" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ── Column 0: app launcher (slides out left) ── -->
+            <Grid x:Name="LauncherPanel"
+                  Grid.Column="0"
+                  ClipToBounds="True"
+                  Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />   <!-- header -->
+                    <RowDefinition Height="Auto" />   <!-- search -->
+                    <RowDefinition Height="*" />      <!-- grid -->
+                </Grid.RowDefinitions>
+
+                <!-- Header: "Apps" + close-chevron -->
+                <Grid Grid.Row="0" Margin="10,12,10,4">
+                    <TextBlock Text="Apps"
+                               FontSize="14"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource ButtonGlyph}"
+                               VerticalAlignment="Center" />
+                    <Button x:Name="LauncherCloseBtn"
+                            Style="{StaticResource CircleButton}"
+                            FontFamily="Segoe MDL2 Assets"
+                            Content="&#xE76C;"
+                            HorizontalAlignment="Right"
+                            ToolTip="Close app launcher"
+                            Click="OnLauncherCloseClicked" />
+                </Grid>
+
+                <!-- Search box -->
+                <Border Grid.Row="1"
+                        Margin="10,2,10,6"
+                        CornerRadius="8"
+                        Background="{DynamicResource ButtonMaterial}"
+                        BorderBrush="{DynamicResource ButtonStroke}"
+                        BorderThickness="0.5">
+                    <TextBox x:Name="LauncherSearch"
+                             Margin="8,4,8,4"
+                             FontSize="12"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             Foreground="{DynamicResource ButtonGlyph}"
+                             CaretBrush="{DynamicResource ButtonGlyph}"
+                             TextChanged="OnLauncherSearchChanged" />
+                </Border>
+
+                <!-- App grid (or loading/empty placeholder) -->
+                <ScrollViewer Grid.Row="2"
+                              Margin="6,0,6,10"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <Grid>
+                        <TextBlock x:Name="LauncherStatus"
+                                   Text="Loading apps…"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource ButtonGlyph}"
+                                   Opacity="0.7"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,24,0,0"
+                                   Visibility="Visible" />
+                        <ItemsControl x:Name="LauncherList"
+                                      Visibility="Collapsed">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel ItemWidth="60" ItemHeight="78" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </Grid>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- ── Column 1: remote ── -->
+            <Grid Grid.Column="1">
             <Rectangle Fill="{DynamicResource BodyHighlight}" RadiusX="22" RadiusY="22" />
 
             <!-- Top-left: close X -->
@@ -135,6 +213,17 @@
                     Margin="12,10,0,0"
                     ToolTip="Close"
                     Click="OnCloseClicked" />
+
+            <!-- Below close: apps grid toggle -->
+            <Button x:Name="AppsBtn"
+                    Style="{StaticResource CircleButton}"
+                    Content="&#xE71D;"
+                    FontFamily="Segoe MDL2 Assets"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    Margin="12,38,0,0"
+                    ToolTip="Apps"
+                    Click="OnAppsClicked" />
 
             <!-- Top-right: power -->
             <Button x:Name="PowerBtn"
@@ -277,6 +366,7 @@
                     </Border>
                 </Grid>
             </StackPanel>
+            </Grid>  <!-- Column 1 wrapper -->
         </Grid>
     </Border>
 </Window>
