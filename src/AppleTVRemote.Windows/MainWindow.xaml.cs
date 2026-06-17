@@ -627,11 +627,14 @@ public partial class MainWindow : Window
         var initial = string.IsNullOrWhiteSpace(name) ? "?"
                     : char.ToUpperInvariant(name.Trim()[0]).ToString();
 
+        // Letter placeholder paints instantly; real icon swaps in async when
+        // iTunes Search returns (≈ one HTTP round-trip per uncached app).
         var tile = new Border
         {
             Width = 48, Height = 48,
             CornerRadius = new CornerRadius(11),
             Margin = new Thickness(0, 4, 0, 2),
+            ClipToBounds = true,
             Background = new LinearGradientBrush(top, bottom, new Point(0, 0), new Point(1, 1)),
             Child = new TextBlock
             {
@@ -643,6 +646,7 @@ public partial class MainWindow : Window
                 VerticalAlignment   = VerticalAlignment.Center,
             },
         };
+        _ = LoadIconAsync(tile, bundleId);
 
         var label = new TextBlock
         {
@@ -684,6 +688,38 @@ public partial class MainWindow : Window
                 "Apple TV Remote", MessageBoxButton.OK, MessageBoxImage.Error);
             await TeardownActiveAsync();
         }
+    }
+
+    private async Task LoadIconAsync(Border tile, string bundleId)
+    {
+        try
+        {
+            var bytes = await AppIconCache.GetAsync(bundleId).ConfigureAwait(false);
+            if (bytes is null || bytes.Length == 0) return;
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                try
+                {
+                    var img = new System.Windows.Media.Imaging.BitmapImage();
+                    using var ms = new System.IO.MemoryStream(bytes);
+                    img.BeginInit();
+                    img.CacheOption  = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                    img.StreamSource = ms;
+                    img.EndInit();
+                    img.Freeze();
+                    // Swap the placeholder for the real artwork.
+                    tile.Background = null;
+                    tile.Child = new System.Windows.Controls.Image
+                    {
+                        Source  = img,
+                        Stretch = System.Windows.Media.Stretch.UniformToFill,
+                    };
+                }
+                catch { /* leave the letter placeholder visible */ }
+            });
+        }
+        catch { /* network errors are already swallowed in AppIconCache */ }
     }
 
     /// <summary>Deterministic gradient per bundle id — same app always gets the same tile colour.</summary>

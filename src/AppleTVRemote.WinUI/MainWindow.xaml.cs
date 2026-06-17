@@ -674,6 +674,8 @@ public sealed partial class MainWindow : WindowEx
         var initial = string.IsNullOrWhiteSpace(name) ? "?"
                     : char.ToUpperInvariant(name.Trim()[0]).ToString();
 
+        // Letter placeholder paints instantly; real icon swaps in async when
+        // iTunes Search returns (≈ one HTTP round-trip per uncached app).
         var tile = new Border
         {
             Width = 48, Height = 48,
@@ -700,6 +702,7 @@ public sealed partial class MainWindow : WindowEx
                 VerticalAlignment   = VerticalAlignment.Center,
             },
         };
+        _ = LoadIconAsync(tile, bundleId);
 
         var label = new TextBlock
         {
@@ -740,6 +743,34 @@ public sealed partial class MainWindow : WindowEx
             await ShowMessageAsync($"Launching {displayName} failed: {ex.Message}");
             await TeardownActiveAsync();
         }
+    }
+
+    private async Task LoadIconAsync(Border tile, string bundleId)
+    {
+        try
+        {
+            var path = await AppIconCache.GetCachedPathAsync(bundleId).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(path)) return;
+
+            // WinUI's DispatcherQueue is the equivalent of WPF's Dispatcher.
+            var dq = DispatcherQueue;
+            if (dq is null) return;
+            dq.TryEnqueue(() =>
+            {
+                try
+                {
+                    var img = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(path));
+                    tile.Background = null;
+                    tile.Child = new Image
+                    {
+                        Source  = img,
+                        Stretch = Stretch.UniformToFill,
+                    };
+                }
+                catch { /* leave the letter placeholder visible */ }
+            });
+        }
+        catch { /* network errors are already swallowed in AppIconCache */ }
     }
 
     private static (Color top, Color bottom) ColorPairFor(string bundleId)
