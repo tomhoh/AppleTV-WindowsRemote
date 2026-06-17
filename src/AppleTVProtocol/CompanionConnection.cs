@@ -57,12 +57,14 @@ public sealed class CompanionConnection : IAsyncDisposable
     public async Task ConnectAsync(CancellationToken cancel = default)
     {
         if (_tcp is not null) throw new InvalidOperationException("already connected");
+        if (CompanionTrace.IsEnabled) CompanionTrace.Write("CONN", $"connecting to {_host}:{_port}");
         var tcp = new TcpClient { NoDelay = true };
         await tcp.ConnectAsync(_host, _port, cancel).ConfigureAwait(false);
         _tcp = tcp;
         _stream = tcp.GetStream();
         _readLoopCts = new CancellationTokenSource();
         _readLoop = Task.Run(() => ReadLoopAsync(_readLoopCts.Token));
+        if (CompanionTrace.IsEnabled) CompanionTrace.Write("CONN", "connected");
     }
 
     /// <summary>
@@ -100,10 +102,14 @@ public sealed class CompanionConnection : IAsyncDisposable
                 wireBytes = new byte[header.Length + ct.Length];
                 Buffer.BlockCopy(header, 0, wireBytes, 0, header.Length);
                 Buffer.BlockCopy(ct, 0, wireBytes, header.Length, ct.Length);
+                if (CompanionTrace.IsEnabled)
+                    CompanionTrace.WriteBytes("SEND", $"{type} (enc, ctr={_cipher.OutCounter - 1})", payload);
             }
             else
             {
                 wireBytes = CompanionFrame.EncodeFrame(type, payload);
+                if (CompanionTrace.IsEnabled)
+                    CompanionTrace.WriteBytes("SEND", $"{type} (clear)", payload);
             }
 
             await _stream.WriteAsync(wireBytes, cancel).ConfigureAwait(false);
@@ -130,9 +136,18 @@ public sealed class CompanionConnection : IAsyncDisposable
                     n = await _stream!.ReadAsync(scratch, cancel).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { break; }
-                catch (Exception ex) { closeReason = ex; break; }
+                catch (Exception ex)
+                {
+                    if (CompanionTrace.IsEnabled) CompanionTrace.Write("CONN", $"read error: {ex.GetType().Name}: {ex.Message}");
+                    closeReason = ex;
+                    break;
+                }
 
-                if (n <= 0) break;   // EOF
+                if (n <= 0)
+                {
+                    if (CompanionTrace.IsEnabled) CompanionTrace.Write("CONN", "EOF from peer (socket closed)");
+                    break;
+                }
                 buffer.AddRange(scratch.AsSpan(0, n).ToArray());
 
                 while (true)
@@ -154,12 +169,15 @@ public sealed class CompanionConnection : IAsyncDisposable
                         }
                         catch (Exception ex)
                         {
+                            if (CompanionTrace.IsEnabled) CompanionTrace.Write("RECV", $"decrypt failed (ctr={_cipher.InCounter - 1}): {ex.Message}");
                             closeReason = ex;
                             cancel = new CancellationToken(canceled: true);   // bail
                             break;
                         }
                     }
 
+                    if (CompanionTrace.IsEnabled)
+                        CompanionTrace.WriteBytes("RECV", $"{frame.Type}", frame.Payload);
                     try { FrameReceived?.Invoke(this, frame); }
                     catch { /* listener errors must not kill the read loop */ }
                 }
@@ -167,6 +185,7 @@ public sealed class CompanionConnection : IAsyncDisposable
         }
         finally
         {
+            if (CompanionTrace.IsEnabled) CompanionTrace.Write("CONN", $"read loop exited (reason: {closeReason?.GetType().Name ?? "clean"})");
             Closed?.Invoke(this, closeReason);
         }
     }

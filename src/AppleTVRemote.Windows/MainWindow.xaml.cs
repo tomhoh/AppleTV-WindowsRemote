@@ -483,13 +483,11 @@ public partial class MainWindow : Window
             _conn          = conn;
             _session       = new CompanionSession(conn);
             _activeDevice  = selected;
-
-            // Apple TV requires four init messages (and a periodic
-            // keepalive) after pair-verify; without them, HID commands
-            // stop being processed after the first one.
-            var clientIdString = System.Text.Encoding.ASCII.GetString(selected.Credentials.ClientIdentifier);
-            await _session.SendSessionInitAsync(clientIdString, Environment.MachineName ?? "Windows Remote");
-
+            // NOTE: SendSessionInitAsync intentionally NOT called here yet —
+            // byte-identical-to-Swift session-init still broke real-device
+            // command processing in v0.1.20–22. Reintroduce only with on-wire
+            // logs to diff against pyatv. The heartbeat/ping responders +
+            // send-lock added in v0.1.21/22 stand on their own.
             return _session;
         }
         catch (Exception ex)

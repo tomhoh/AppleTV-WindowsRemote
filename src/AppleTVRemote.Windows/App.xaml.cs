@@ -19,6 +19,10 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // Diagnostic log at %LOCALAPPDATA%\AppleTVRemote\session.log so
+        // bug reports can include the on-wire trace. Cheap when nothing
+        // hits the wire; rolled over at ~1 MB.
+        AppleTVProtocol.CompanionTrace.Enable();
         // Give the TaskbarIcon a real glyph. Without an Icon /
         // IconSource, Hardcodet's NotifyIcon silently registers itself
         // with the shell but has nothing to draw — the process runs

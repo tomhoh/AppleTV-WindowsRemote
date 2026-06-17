@@ -31,6 +31,10 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        // Diagnostic log at %LOCALAPPDATA%\AppleTVRemote\session.log so
+        // bug reports can include the on-wire trace. Cheap when nothing
+        // hits the wire; rolled over at ~1 MB.
+        AppleTVProtocol.CompanionTrace.Enable();
         _trayIcon = new TaskbarIcon
         {
             ToolTipText = "Apple TV Remote",
