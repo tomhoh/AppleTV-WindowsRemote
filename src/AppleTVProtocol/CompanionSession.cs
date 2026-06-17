@@ -138,13 +138,16 @@ public sealed class CompanionSession : IAsyncDisposable
         // 4. _tiStart — text-input session start, empty content.
         await SendRequestAsync("_tiStart", new Dictionary<string, object?>(), timeout: TimeSpan.FromSeconds(10), cancel: cancel).ConfigureAwait(false);
 
-        // 5. Subscribe to events so the TV pushes us periodic state updates
-        // — that inbound traffic keeps the connection's app-level idle timer
-        // alive (pyatv only subscribes to _iMC; we add a few others the Swift
-        // sibling subscribes to). Fire-and-forget Event, no response expected.
+        // 5. Subscribe to media-controls events. pyatv subscribes ONLY to
+        // _iMC here — earlier we were also subscribing to SystemStatus,
+        // TVSystemStatus, _tiStarted, _tiStopped (matching the Swift sibling),
+        // but on the user's tvOS that subscription request appeared to put
+        // the Companion service into a state where FetchLaunchableApplications
+        // Event was silently dropped. Stick to pyatv's exact set until we
+        // have proof a broader subscription is safe.
         var interest = new Dictionary<string, object?>
         {
-            { "_regEvents", new object[] { "_iMC", "SystemStatus", "TVSystemStatus", "_tiStarted", "_tiStopped" } },
+            { "_regEvents", new object[] { "_iMC" } },
         };
         await SendEventNoWaitAsync("_interest", interest, cancel).ConfigureAwait(false);
     }
@@ -220,11 +223,21 @@ public sealed class CompanionSession : IAsyncDisposable
         {
             await _conn.SendAsync(CompanionFrameType.E_OPACK, Opack.Pack(envelope), cancel).ConfigureAwait(false);
 
+            var effective = timeout ?? _defaultTimeout;
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            timeoutCts.CancelAfter(timeout ?? _defaultTimeout);
+            timeoutCts.CancelAfter(effective);
             using (timeoutCts.Token.Register(() => tcs.TrySetCanceled(timeoutCts.Token)))
             {
-                return await tcs.Task.ConfigureAwait(false);
+                try
+                {
+                    return await tcs.Task.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancel.IsCancellationRequested)
+                {
+                    if (CompanionTrace.IsEnabled)
+                        CompanionTrace.Write("SEND", $"timeout waiting for response to {identifier} xid=0x{xid:x8} after {effective.TotalSeconds:0}s");
+                    throw;
+                }
             }
         }
         finally
@@ -346,8 +359,10 @@ public sealed class CompanionSession : IAsyncDisposable
     /// </summary>
     public async Task<IReadOnlyDictionary<string, string>> ListAppsAsync(CancellationToken cancel = default)
     {
+        // The TV can take a while to enumerate every installed app — push the
+        // 5 s default out to 30 s before we declare it dead.
         var resp = await SendRequestAsync("FetchLaunchableApplicationsEvent",
-            new Dictionary<string, object?>(), cancel: cancel).ConfigureAwait(false);
+            new Dictionary<string, object?>(), timeout: TimeSpan.FromSeconds(30), cancel: cancel).ConfigureAwait(false);
 
         // Walk down resp["_c"]["FetchLaunchableApplicationsEventResponseDictionary"]
         if (!resp.TryGetValue("_c", out var contentBoxed)) return new Dictionary<string, string>();
