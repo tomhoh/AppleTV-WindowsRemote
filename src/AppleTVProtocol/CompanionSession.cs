@@ -76,8 +76,12 @@ public sealed class CompanionSession : IAsyncDisposable
     private readonly ConcurrentDictionary<int, TaskCompletionSource<IDictionary<string, object?>>> _pending = new();
     private int _xidCounter;
     private TimeSpan _defaultTimeout = TimeSpan.FromSeconds(5);
-    private Timer? _keepaliveTimer;
-    private static readonly TimeSpan KeepaliveInterval = TimeSpan.FromSeconds(25);
+
+    // Set by SendSessionInitAsync to the XID we used for _sessionStart.
+    // When its response arrives we send _interest to subscribe to events —
+    // that inbound traffic keeps the ATV's idle timer from firing, so no
+    // separate keepalive timer is needed (matches pyatv / Swift behavior).
+    private int _sessionStartXid;
 
     public CompanionSession(CompanionConnection conn)
     {
@@ -90,11 +94,15 @@ public sealed class CompanionSession : IAsyncDisposable
 
     /// <summary>
     /// Send the four session-init messages required after pair-verify
-    /// (_systemInfo, _touchStart, _sessionStart, _tiStart) and start a
-    /// 25-second keepalive. Without _touchStart the Apple TV closes the
-    /// socket after ~35 s; without the full sequence, HID commands stop
-    /// being processed after the first one ("task was cancelled" timeouts).
-    /// Mirrors the Swift sibling's CompanionSession.sendSessionInit.
+    /// (_systemInfo, _touchStart, _sessionStart, _tiStart). Without
+    /// _touchStart the ATV closes the socket ~35 s after pair-verify;
+    /// without the full sequence, HID commands stop being processed
+    /// after the first one ("task was cancelled" timeouts). Once the
+    /// _sessionStart response arrives we subscribe to events via
+    /// _interest — the resulting inbound event traffic acts as the
+    /// natural keepalive, so no separate timer is needed. Mirrors the
+    /// Swift sibling's CompanionSession.sendSessionInit + onInbound
+    /// _sessionStart handling.
     /// </summary>
     public async Task SendSessionInitAsync(string clientId, string deviceName, CancellationToken cancel = default)
     {
@@ -127,35 +135,21 @@ public sealed class CompanionSession : IAsyncDisposable
         };
         await SendRequestNoWaitAsync("_touchStart", touchStart, cancel).ConfigureAwait(false);
 
-        // 3. _sessionStart for the tvremoteservices session.
+        // 3. _sessionStart — remember its XID so OnFrameReceived can
+        //    fire _interest as soon as the matching response arrives.
         uint sid = (uint)Random.Shared.Next(int.MinValue, int.MaxValue);
         var sessionStart = new Dictionary<string, object?>
         {
             { "_srvT", "com.apple.tvremoteservices" },
             { "_sid",  sid },
         };
-        await SendRequestNoWaitAsync("_sessionStart", sessionStart, cancel).ConfigureAwait(false);
+        _sessionStartXid = await SendRequestNoWaitAsync("_sessionStart", sessionStart, cancel).ConfigureAwait(false);
 
         // 4. _tiStart — text-input session start, empty content.
         await SendRequestNoWaitAsync("_tiStart", new Dictionary<string, object?>(), cancel).ConfigureAwait(false);
-
-        StartKeepalive();
     }
 
-    private void StartKeepalive()
-    {
-        _keepaliveTimer?.Dispose();
-        _keepaliveTimer = new Timer(_ =>
-        {
-            try
-            {
-                _ = SendRequestNoWaitAsync("_fetchAttentionState", new Dictionary<string, object?>(), CancellationToken.None);
-            }
-            catch { /* keepalive is best-effort */ }
-        }, null, KeepaliveInterval, KeepaliveInterval);
-    }
-
-    private async Task SendRequestNoWaitAsync(string identifier, IDictionary<string, object?> content, CancellationToken cancel)
+    private async Task<int> SendRequestNoWaitAsync(string identifier, IDictionary<string, object?> content, CancellationToken cancel)
     {
         int xid = System.Threading.Interlocked.Increment(ref _xidCounter);
         var envelope = new Dictionary<string, object?>
@@ -163,6 +157,32 @@ public sealed class CompanionSession : IAsyncDisposable
             { "_i", identifier },
             { "_t", (int)CompanionMessageType.Request },
             { "_c", content },
+            { "_x", xid },
+        };
+        await _conn.SendAsync(CompanionFrameType.E_OPACK, Opack.Pack(envelope), cancel).ConfigureAwait(false);
+        return xid;
+    }
+
+    private async Task SendEventNoWaitAsync(string identifier, IDictionary<string, object?> content, CancellationToken cancel)
+    {
+        int xid = System.Threading.Interlocked.Increment(ref _xidCounter);
+        var envelope = new Dictionary<string, object?>
+        {
+            { "_i", identifier },
+            { "_t", (int)CompanionMessageType.Event },
+            { "_c", content },
+            { "_x", xid },
+        };
+        await _conn.SendAsync(CompanionFrameType.E_OPACK, Opack.Pack(envelope), cancel).ConfigureAwait(false);
+    }
+
+    private async Task SendResponseNoWaitAsync(string identifier, int xid, IDictionary<string, object?>? content, CancellationToken cancel)
+    {
+        var envelope = new Dictionary<string, object?>
+        {
+            { "_i", identifier },
+            { "_t", (int)CompanionMessageType.Response },
+            { "_c", content ?? new Dictionary<string, object?>() },
             { "_x", xid },
         };
         await _conn.SendAsync(CompanionFrameType.E_OPACK, Opack.Pack(envelope), cancel).ConfigureAwait(false);
@@ -357,8 +377,6 @@ public sealed class CompanionSession : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
-        _keepaliveTimer?.Dispose();
-        _keepaliveTimer = null;
         _conn.FrameReceived -= OnFrameReceived;
         foreach (var tcs in _pending.Values)
             tcs.TrySetCanceled();
@@ -378,16 +396,54 @@ public sealed class CompanionSession : IAsyncDisposable
         catch { return; }
         if (dict is null) return;
 
-        // Only Responses carry an XID that maps to a pending request.
         if (!dict.TryGetValue("_t", out var typeBoxed)) return;
         if (UnboxInt(typeBoxed) is not { } type) return;
-        if ((CompanionMessageType)type != CompanionMessageType.Response) return;
+        dict.TryGetValue("_x", out var xidBoxed);
+        int? xid = UnboxInt(xidBoxed);
+        dict.TryGetValue("_i", out var idBoxed);
+        string identifier = idBoxed as string ?? string.Empty;
 
-        if (!dict.TryGetValue("_x", out var xidBoxed)) return;
-        if (UnboxInt(xidBoxed) is not { } xid) return;
+        switch ((CompanionMessageType)type)
+        {
+            case CompanionMessageType.Request:
+                // The ATV expects an immediate response to _heartbeat /
+                // _ping requests. Without it the connection is considered
+                // dead and the socket is closed mid-session — which is
+                // exactly the "first command works, the rest time out"
+                // symptom (mirrors Swift's onInbound _heartbeat / _ping).
+                if (xid is int reqXid)
+                {
+                    if (identifier == "_heartbeat")
+                        _ = SendResponseNoWaitAsync("_heartbeat", reqXid, null, CancellationToken.None);
+                    else if (identifier == "_ping")
+                        _ = SendResponseNoWaitAsync("_pong",      reqXid, null, CancellationToken.None);
+                }
+                return;
 
-        if (_pending.TryRemove(xid, out var tcs))
-            tcs.TrySetResult(dict);
+            case CompanionMessageType.Response:
+                if (xid is not int respXid) return;
+                if (_pending.TryRemove(respXid, out var tcs))
+                    tcs.TrySetResult(dict);
+
+                // When _sessionStart's response arrives, subscribe to events
+                // so the ATV pushes us periodic state updates — that inbound
+                // traffic keeps the connection's app-level idle timer alive.
+                if (respXid == _sessionStartXid)
+                {
+                    _sessionStartXid = 0;
+                    var interest = new Dictionary<string, object?>
+                    {
+                        { "_regEvents", new object[] { "_iMC", "SystemStatus", "TVSystemStatus", "_tiStarted", "_tiStopped" } },
+                    };
+                    _ = SendEventNoWaitAsync("_interest", interest, CancellationToken.None);
+                }
+                return;
+
+            case CompanionMessageType.Event:
+                // Inbound events (e.g. _iMC media-control updates) don't
+                // require a response — they're just keepalive-by-side-effect.
+                return;
+        }
     }
 
     /// <summary>
