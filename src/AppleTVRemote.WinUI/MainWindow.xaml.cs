@@ -539,11 +539,16 @@ public sealed partial class MainWindow : WindowEx
             _conn          = conn;
             _session       = new CompanionSession(conn);
             _activeDevice  = selected;
-            // NOTE: SendSessionInitAsync intentionally NOT called here yet —
-            // byte-identical-to-Swift session-init still broke real-device
-            // command processing in v0.1.20–22. Reintroduce only with on-wire
-            // logs to diff against pyatv. The heartbeat/ping responders +
-            // send-lock added in v0.1.21/22 stand on their own.
+
+            // Run the Companion session-init handshake.
+            // The v0.1.20–22 failures were the pair-verify M4 race (fixed in
+            // v0.1.24), not this code. HID commands happen to work without it,
+            // but app-launcher RPCs (FetchLaunchableApplicationsEvent,
+            // _launchApp) silently time out and the TV closes the socket
+            // ~35 s after the missing _touchStart — exactly the symptom in
+            // the user-supplied wire log after v0.1.26.
+            var clientIdString = System.Text.Encoding.ASCII.GetString(selected.Credentials.ClientIdentifier);
+            await _session.SendSessionInitAsync(clientIdString, Environment.MachineName ?? "Windows Remote");
             return _session;
         }
         catch (Exception ex)
