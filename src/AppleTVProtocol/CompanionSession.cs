@@ -145,16 +145,13 @@ public sealed class CompanionSession : IAsyncDisposable
         };
         await SendEventNoWaitAsync("_interest", interest, cancel).ConfigureAwait(false);
 
-        // 6. _fetchAttentionState — Request, AWAIT response.
-        // This is what Swift CompanionSession does on receipt of the
-        // _sessionStart response (CompanionSession.swift:576-592): it sends
-        // _interest, then _fetchAttentionState, and only fires
-        // sessionDidConfirmStart() after the latter's reply arrives. Without
-        // this final handshake the TV processes session-init replies and HID
-        // commands but silently drops FetchLaunchableApplicationsEvent and
-        // _launchApp — observed end-to-end in the v0.1.30 wire trace.
-        await SendRequestAsync("_fetchAttentionState", new Dictionary<string, object?>(),
-            timeout: TimeSpan.FromSeconds(10), cancel: cancel).ConfigureAwait(false);
+        // NOTE: previously we awaited _fetchAttentionState here to mirror
+        // Swift's sessionDidConfirmStart() path, but the user's tvOS returns
+        // an explicit "MPErrorDomain / No request handler" for that command
+        // (seen in the v0.1.31 trace). It doesn't appear to be required for
+        // FetchLaunchableApplicationsEvent to work on supported firmwares,
+        // and sending it just adds noise. Skip until we have evidence
+        // otherwise.
     }
 
     private async Task<int> SendRequestNoWaitAsync(string identifier, IDictionary<string, object?> content, CancellationToken cancel)
@@ -233,9 +230,10 @@ public sealed class CompanionSession : IAsyncDisposable
             timeoutCts.CancelAfter(effective);
             using (timeoutCts.Token.Register(() => tcs.TrySetCanceled(timeoutCts.Token)))
             {
+                IDictionary<string, object?> resp;
                 try
                 {
-                    return await tcs.Task.ConfigureAwait(false);
+                    resp = await tcs.Task.ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancel.IsCancellationRequested)
                 {
@@ -243,6 +241,17 @@ public sealed class CompanionSession : IAsyncDisposable
                         CompanionTrace.Write("SEND", $"timeout waiting for response to {identifier} xid=0x{xid:x8} after {effective.TotalSeconds:0}s");
                     throw;
                 }
+                // pyatv-style error surfacing: responses with an _em (error
+                // message) field are protocol-level failures, not data.
+                if (resp.TryGetValue("_em", out var emBoxed) && emBoxed is string em && em.Length > 0)
+                {
+                    string domain = resp.TryGetValue("_ed", out var edBoxed) && edBoxed is string ed ? ed : "Companion";
+                    int    code   = resp.TryGetValue("_ec", out var ecBoxed) ? UnboxInt(ecBoxed) ?? 0    : 0;
+                    if (CompanionTrace.IsEnabled)
+                        CompanionTrace.Write("SEND", $"{identifier} xid=0x{xid:x8} returned error: {domain}#{code} \"{em}\"");
+                    throw new InvalidOperationException($"{identifier}: {domain}#{code} {em}");
+                }
+                return resp;
             }
         }
         finally
