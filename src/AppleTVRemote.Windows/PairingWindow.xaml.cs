@@ -133,16 +133,25 @@ public partial class PairingWindow : Window
                     return;
                 }
 
-                // Dedup by DeviceKey (deviceid TXT, or IP) so an Apple TV
-                // that shows up once via _companion-link and once via
-                // _airplay is one row in the list. Prefer the
-                // companion-link entry — that's the one with the right
-                // port for pairing; the airplay entry has port 7000.
+                // Dedup by DeviceKey (deviceid TXT, or IP). An Apple TV
+                // that shows up under both _companion-link and _airplay
+                // collapses to one row — but we union the TXT records
+                // from both so the airplay 'fn' (friendlyName) survives
+                // even after we pick the companion-link entry as the
+                // canonical one (whose Port is the pairing port; airplay
+                // is port 7000).
                 for (int i = 0; i < _devices.Count; i++)
                 {
                     if (_devices[i].DeviceKey != dev.DeviceKey) continue;
-                    if (!_devices[i].IsCompanionLinkEntry && dev.IsCompanionLinkEntry)
-                        _devices[i] = dev;   // upgrade airplay → companion
+                    // Pick whichever is the companion-link entry as the
+                    // "base" (its Port is the pairing port), then merge
+                    // the OTHER one's TXT in.
+                    var (companionLink, other) = _devices[i].IsCompanionLinkEntry
+                        ? (_devices[i], dev)
+                        : dev.IsCompanionLinkEntry
+                            ? (dev, _devices[i])
+                            : (_devices[i], dev);
+                    _devices[i] = companionLink.MergedWith(other);
                     return;
                 }
                 _devices.Add(dev);

@@ -81,36 +81,34 @@ public sealed record AppleTVDevice(
     {
         get
         {
+            // Companion-link rpMd is the strongest positive signal — when
+            // present and AppleTV* prefixed, it's definitive.
             var rpMd = Rpmd ?? string.Empty;
             if (rpMd.StartsWith("AppleTV", StringComparison.OrdinalIgnoreCase))
                 return true;
             if (rpMd.Length > 0)
-                return false;   // present but not AppleTV → HomePod / Mac
+                return false;   // present but not AppleTV → HomePod / Mac / iPhone
 
-            // AirPlay side gives us a "model" field with values like
-            // "AppleTV11,1" / "AudioAccessory5,1" — only the AppleTV*
-            // ones are TVs.
+            // AirPlay 'model' field — values like "AppleTV11,1" /
+            // "AudioAccessory5,1" — same prefix-match rule.
             var airplay = AirPlayModel ?? string.Empty;
             if (airplay.StartsWith("AppleTV", StringComparison.OrdinalIgnoreCase))
                 return true;
             if (airplay.Length > 0)
                 return false;
 
-            // Fall back to the rpFl bit-0x4000 check (PIN pairing supported).
-            var rpFl = TxtRecords.GetValueOrDefault("rpFl")
-                       ?? TxtRecords.GetValueOrDefault("rpfl")
-                       ?? string.Empty;
-            if (rpFl.Length > 0)
-            {
-                var clean = rpFl.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
-                    ? rpFl.Substring(2) : rpFl;
-                if (uint.TryParse(clean, System.Globalization.NumberStyles.HexNumber, null, out var flags))
-                    return (flags & 0x4000) != 0;
-            }
-
-            // Nothing tells us either way — be lenient. Apple TVs sometimes
-            // ship TXT-less browse records and we'd rather show them.
-            return true;
+            // No model field at all → reject by default. Pre-v0.2.4 we
+            // defaulted TRUE here ("be lenient") but that's how every
+            // half-resolved companion-link advert from HomePods, Macs,
+            // iPhones, AirPods companions and screen-shared Macs ended up
+            // in the list. Apple TVs reliably advertise model on _airplay
+            // even when companion-link is slow — losing a few seconds of
+            // visibility is the right trade for kicking the noise out.
+            //
+            // pyatv also warns the rpFl bit-0x4000 ("PIN pairing supported")
+            // check is unreliable across tvOS versions, so we drop it as a
+            // primary signal entirely.
+            return false;
         }
     }
 
@@ -125,8 +123,57 @@ public sealed record AppleTVDevice(
         var code => $"Apple TV ({code})",
     };
 
+    /// <summary>
+    /// User-friendly display name for list rows. AirPlay TXT key 'fn'
+    /// (friendlyName) is the user's chosen device name — "Living Room",
+    /// "Bedroom" — which is what you actually want to show. Falls back to
+    /// the Bonjour instance name (which for companion-link entries is
+    /// usually a UUID-looking string, so we use it only when nothing
+    /// better is available).
+    /// </summary>
+    public string DisplayName
+    {
+        get
+        {
+            var fn = TxtRecords.GetValueOrDefault("fn");
+            if (!string.IsNullOrWhiteSpace(fn)) return fn;
+            // Bonjour instance name is informative iff it doesn't look
+            // like a UUID/MAC — accept anything containing a space or
+            // any lowercase letter (UUIDs are uppercase hex + dashes,
+            // MACs are uppercase hex + colons).
+            if (!string.IsNullOrWhiteSpace(Name) &&
+                (Name.Contains(' ') || Name.Any(char.IsLower)))
+                return Name;
+            return ModelFriendly;
+        }
+    }
+
     /// <summary>"Apple TV 4K · 192.168.1.42:49152" — convenience for list rows.</summary>
     public string Subtitle => $"{ModelFriendly} · {AddressString}:{Port}";
+
+    /// <summary>
+    /// Return a new device record that unions TXT keys from <paramref name="other"/>
+    /// into ours. Used when the same physical device shows up under both
+    /// _companion-link._tcp and _airplay._tcp — each carries different TXT
+    /// keys (fn lives on airplay; rpMd on companion-link). We keep
+    /// <em>this</em> entry's Port/FullName (the caller picks which entry
+    /// "wins" — usually the companion-link one because its Port is the
+    /// pairing port) and only merge in TXT keys we don't already have.
+    /// </summary>
+    public AppleTVDevice MergedWith(AppleTVDevice other)
+    {
+        var merged = new Dictionary<string, string>(TxtRecords, StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in other.TxtRecords)
+            merged.TryAdd(kv.Key, kv.Value);
+        // Prefer the more user-friendly Bonjour instance name when ours
+        // looks like a UUID (companion-link) and the other's doesn't (airplay).
+        var name = (!string.IsNullOrWhiteSpace(other.Name) &&
+                    (other.Name.Contains(' ') || other.Name.Any(char.IsLower)) &&
+                    !Name.Contains(' ') && !Name.Any(char.IsLower))
+            ? other.Name
+            : Name;
+        return new AppleTVDevice(name, FullName, Address, Port, merged);
+    }
 
     /// <summary>
     /// True if this entry came from <c>_companion-link._tcp.local.</c>

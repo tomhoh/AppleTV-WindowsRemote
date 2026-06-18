@@ -75,7 +75,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0">
-                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
                             <TextBlock Text="{Binding Subtitle}" FontSize="11" Opacity="0.6" />
                         </StackPanel>
                         <!-- All rows are Apple TVs now (others filtered upstream) — no badge needed. -->

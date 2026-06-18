@@ -84,7 +84,7 @@
                                               FontFamily="Segoe MDL2 Assets"
                                               FontSize="16" />
                                     <StackPanel Grid.Column="1" Spacing="1">
-                                        <TextBlock Text="{Binding Name}"
+                                        <TextBlock Text="{Binding DisplayName}"
                                                    FontSize="13" FontWeight="SemiBold"
                                                    MaxLines="1" TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{Binding Subtitle}"

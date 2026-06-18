@@ -107,14 +107,20 @@ public sealed partial class PairingWindow : WindowEx
                 }
 
                 // Dedup by DeviceKey so one physical Apple TV doesn't
-                // show up twice (once per service). Prefer the
-                // companion-link entry — the airplay entry uses port
-                // 7000, which is wrong for pairing.
+                // show up twice (once per service). Pick the
+                // companion-link entry as the base (its Port is the
+                // pairing port; airplay port 7000 would be wrong), then
+                // merge the other's TXT records in — that keeps the
+                // airplay 'fn' (friendlyName) for display.
                 for (int i = 0; i < _devices.Count; i++)
                 {
                     if (_devices[i].DeviceKey != dev.DeviceKey) continue;
-                    if (!_devices[i].IsCompanionLinkEntry && dev.IsCompanionLinkEntry)
-                        _devices[i] = dev;
+                    var (companionLink, other) = _devices[i].IsCompanionLinkEntry
+                        ? (_devices[i], dev)
+                        : dev.IsCompanionLinkEntry
+                            ? (dev, _devices[i])
+                            : (_devices[i], dev);
+                    _devices[i] = companionLink.MergedWith(other);
                     return;
                 }
                 _devices.Add(dev);
