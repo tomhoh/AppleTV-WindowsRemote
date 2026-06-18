@@ -591,7 +591,6 @@ public sealed partial class MainWindow : WindowEx
     private System.Collections.Generic.IReadOnlyDictionary<string, string>? _cachedApps;
     private string? _launcherFilter;
     private bool    _launcherOpen;
-    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _launcherAnimTimer;
 
     private async void OnAppsClicked(object sender, RoutedEventArgs e)
     {
@@ -623,62 +622,67 @@ public sealed partial class MainWindow : WindowEx
     private void OpenLauncher()
     {
         _launcherOpen = true;
+        // Snap the window to its open size in ONE step — per-frame
+        // AppWindow.MoveAndResize for transparent + acrylic popups is
+        // brutally jerky on the desktop compositor.
+        var size = AppWindow.Size;
+        var pos  = AppWindow.Position;
+        double scale = Width > 0 ? size.Width / Width : 1.0;
+        int colPx = (int)Math.Round(LauncherPanelWidth * scale);
+        AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(pos.X - colPx, pos.Y, size.Width + colPx, size.Height));
+        LauncherCol.Width = new GridLength(LauncherPanelWidth);
+
+        // Now animate JUST the TranslateTransform on the panel — Microsoft.UI
+        // .Composition handles this on the compositor thread, GPU-accelerated.
         LauncherPanel.Visibility = Visibility.Visible;
-        AnimateLauncher(LauncherPanelWidth);
+        LauncherSlide.X = -LauncherPanelWidth;
+        AnimateSlide(0);
     }
 
     private void CloseLauncher()
     {
         _launcherOpen = false;
-        AnimateLauncher(0, onCompleted: () => LauncherPanel.Visibility = Visibility.Collapsed);
+        AnimateSlide(-LauncherPanelWidth, onCompleted: () =>
+        {
+            LauncherPanel.Visibility = Visibility.Collapsed;
+            LauncherCol.Width = new GridLength(0);
+            LauncherSlide.X = 0;
+
+            // Now snap window back to remote-only.
+            var size = AppWindow.Size;
+            var pos  = AppWindow.Position;
+            double scale = Width > 0 ? size.Width / Width : 1.0;
+            int colPx = (int)Math.Round(LauncherPanelWidth * scale);
+            AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(pos.X + colPx, pos.Y, size.Width - colPx, size.Height));
+        });
     }
 
     /// <summary>
-    /// Drive the slide-out animation on a 60 fps DispatcherQueueTimer.
-    /// WinUI/WinAppSDK has no built-in animator for GridLength or
-    /// WindowEx.Width, so we step every value together with a CubicEase-out
-    /// curve matching the WPF sibling. The remote's RIGHT edge stays
-    /// anchored in screen space — the launcher slides out leftward from
-    /// behind the remote on open and slides back in on close.
+    /// Animate the launcher panel's TranslateTransform.X — driven by the
+    /// WinUI Composition layer (compositor thread, no per-frame UI work)
+    /// for buttery slide. Uses Storyboard so we get proper Completed
+    /// callback support, with a 220 ms cubic ease-out matching the WPF
+    /// sibling.
     /// </summary>
-    private void AnimateLauncher(double targetColWidthDip, Action? onCompleted = null)
+    private void AnimateSlide(double targetX, Action? onCompleted = null)
     {
-        _launcherAnimTimer?.Stop();
-
-        // WindowEx.Width is in DIPs; AppWindow.Position/Size are in physical
-        // pixels. We do the entire animation in pixels using AppWindow
-        // (MoveAndResize takes a single RectInt32 so X + Width update
-        // atomically, no flicker) and convert our DIP constants once at the
-        // start using the current rasterization scale.
-        double startColDip = LauncherCol.Width.Value;
-        var startPos  = AppWindow.Position;
-        var startSize = AppWindow.Size;
-        double scale  = Width > 0 ? (double)startSize.Width / Width : 1.0;
-
-        int targetWinPx = (int)Math.Round((RemoteWidth + targetColWidthDip) * scale);
-        int targetX     = startPos.X + startSize.Width - targetWinPx;   // right edge stays fixed
-        var sw    = System.Diagnostics.Stopwatch.StartNew();
-        var total = LauncherAnimDuration;
-
-        _launcherAnimTimer = DispatcherQueue.CreateTimer();
-        _launcherAnimTimer.Interval = TimeSpan.FromMilliseconds(16); // ~60 fps
-        _launcherAnimTimer.Tick += (timer, _) =>
+        var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
         {
-            double t = Math.Clamp(sw.Elapsed.TotalMilliseconds / total.TotalMilliseconds, 0, 1);
-            double e = 1 - Math.Pow(1 - t, 3);  // cubic ease-out
-            int w = (int)(startSize.Width + (targetWinPx - startSize.Width) * e);
-            int x = (int)(startPos.X      + (targetX     - startPos.X)      * e);
-            LauncherCol.Width = new GridLength(startColDip + (targetColWidthDip - startColDip) * e);
-            AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(x, startPos.Y, w, startSize.Height));
-            if (t >= 1)
+            To = targetX,
+            Duration = new Microsoft.UI.Xaml.Duration(LauncherAnimDuration),
+            EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase
             {
-                timer.Stop();
-                LauncherCol.Width = new GridLength(targetColWidthDip);
-                AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(targetX, startPos.Y, targetWinPx, startSize.Height));
-                onCompleted?.Invoke();
-            }
+                EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut,
+            },
+            EnableDependentAnimation = true,
         };
-        _launcherAnimTimer.Start();
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, LauncherSlide);
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, "X");
+        var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+        sb.Children.Add(anim);
+        if (onCompleted is not null)
+            sb.Completed += (_, _) => onCompleted();
+        sb.Begin();
     }
 
     private async Task FetchAppsAsync(CompanionSession session)

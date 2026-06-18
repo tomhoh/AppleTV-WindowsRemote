@@ -527,24 +527,6 @@ public partial class MainWindow : Window
     private string? _launcherFilter;
     private bool    _launcherOpen;
 
-    /// <summary>
-    /// Animatable proxy for LauncherCol.Width. GridLength itself isn't an
-    /// animatable type; we drive this DP via a DoubleAnimation and forward
-    /// each tick to the column width — so the launcher pane visibly slides
-    /// in/out instead of snapping while the window resizes.
-    /// </summary>
-    public static readonly DependencyProperty LauncherColWidthProperty =
-        DependencyProperty.Register(nameof(LauncherColWidthValue), typeof(double), typeof(MainWindow),
-            new PropertyMetadata(0.0, (d, e) =>
-            {
-                var w = (MainWindow)d;
-                w.LauncherCol.Width = new GridLength((double)e.NewValue);
-            }));
-    public double LauncherColWidthValue
-    {
-        get => (double)GetValue(LauncherColWidthProperty);
-        set => SetValue(LauncherColWidthProperty, value);
-    }
 
     private async void OnAppsClicked(object sender, RoutedEventArgs e)
     {
@@ -576,56 +558,48 @@ public partial class MainWindow : Window
     private void OpenLauncher()
     {
         _launcherOpen = true;
+        // 1. Snap the window to its open size in ONE step (Win32 SetWindowPos
+        //    is brutal for transparent + drop-shadow popups when called per
+        //    frame — that's what made the previous animation jerky).
+        //    Right edge stays anchored: shift Left back by the launcher width,
+        //    grow Width by the same amount.
+        Left -= LauncherPanelWidth;
+        Width = RemoteWidth + LauncherPanelWidth;
+        LauncherCol.Width = new GridLength(LauncherPanelWidth);
+
+        // 2. Show the panel parked off-screen-left and animate just the
+        //    TranslateTransform — render-thread, GPU-composited, smooth.
         LauncherPanel.Visibility = Visibility.Visible;
-        AnimateLauncher(LauncherPanelWidth);
+        LauncherSlide.X = -LauncherPanelWidth;
+        AnimateSlide(0);
     }
 
     private void CloseLauncher()
     {
         _launcherOpen = false;
-        AnimateLauncher(0, onCompleted: () => LauncherPanel.Visibility = Visibility.Collapsed);
+        AnimateSlide(-LauncherPanelWidth, onCompleted: () =>
+        {
+            // Snap window back to remote-only AFTER the inner slide finishes.
+            LauncherPanel.Visibility = Visibility.Collapsed;
+            LauncherCol.Width = new GridLength(0);
+            Width = RemoteWidth;
+            Left += LauncherPanelWidth;
+            LauncherSlide.X = 0;
+        });
     }
 
-    private void AnimateLauncher(double targetWidth, Action? onCompleted = null)
+    private void AnimateSlide(double targetX, Action? onCompleted = null)
     {
-        // The remote's RIGHT edge must stay anchored at its current screen
-        // position. The launcher slides out to the LEFT of the remote on
-        // open, and slides back into the remote on close. To do that we
-        // animate Width (column 0 grows/shrinks) AND Left (window expands
-        // leftward / contracts rightward) so the right edge sits still.
-        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
-        var duration = new Duration(LauncherAnimDuration);
-
-        double targetWinWidth = RemoteWidth + targetWidth;
-        double targetLeft     = Left + Width - targetWinWidth;   // keeps right edge fixed
-
-        var colAnim = new DoubleAnimation
+        var anim = new DoubleAnimation
         {
-            To = targetWidth,
-            Duration = duration,
-            EasingFunction = easing,
-            FillBehavior = FillBehavior.HoldEnd,
-        };
-        var winAnim = new DoubleAnimation
-        {
-            To = targetWinWidth,
-            Duration = duration,
-            EasingFunction = easing,
-            FillBehavior = FillBehavior.HoldEnd,
-        };
-        var leftAnim = new DoubleAnimation
-        {
-            To = targetLeft,
-            Duration = duration,
-            EasingFunction = easing,
+            To = targetX,
+            Duration = new Duration(LauncherAnimDuration),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
             FillBehavior = FillBehavior.HoldEnd,
         };
         if (onCompleted is not null)
-            winAnim.Completed += (_, _) => onCompleted();
-
-        BeginAnimation(LauncherColWidthProperty, colAnim);
-        BeginAnimation(WidthProperty, winAnim);
-        BeginAnimation(LeftProperty, leftAnim);
+            anim.Completed += (_, _) => onCompleted();
+        LauncherSlide.BeginAnimation(TranslateTransform.XProperty, anim);
     }
 
     private async Task FetchAppsAsync(CompanionSession session)

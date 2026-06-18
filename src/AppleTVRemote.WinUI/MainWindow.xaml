@@ -67,7 +67,11 @@
         <!-- ── Column 0: app launcher (slides out left) ── -->
         <Grid x:Name="LauncherPanel"
               Grid.Column="0"
-              Visibility="Collapsed">
+              Visibility="Collapsed"
+              RenderTransformOrigin="0,0">
+            <Grid.RenderTransform>
+                <TranslateTransform x:Name="LauncherSlide" X="0" />
+            </Grid.RenderTransform>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />

@@ -133,7 +133,11 @@
             <Grid x:Name="LauncherPanel"
                   Grid.Column="0"
                   ClipToBounds="True"
-                  Visibility="Collapsed">
+                  Visibility="Collapsed"
+                  RenderTransformOrigin="0,0">
+                <Grid.RenderTransform>
+                    <TranslateTransform x:Name="LauncherSlide" X="0" />
+                </Grid.RenderTransform>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />   <!-- header -->
                     <RowDefinition Height="Auto" />   <!-- search -->
