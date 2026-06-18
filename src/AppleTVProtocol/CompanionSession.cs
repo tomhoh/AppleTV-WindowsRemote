@@ -402,19 +402,42 @@ public sealed class CompanionSession : IAsyncDisposable
         var resp = await SendRequestAsync("FetchLaunchableApplicationsEvent",
             new Dictionary<string, object?>(), timeout: TimeSpan.FromSeconds(30), cancel: cancel).ConfigureAwait(false);
 
-        // Walk down resp["_c"]["FetchLaunchableApplicationsEventResponseDictionary"]
-        if (!resp.TryGetValue("_c", out var contentBoxed)) return new Dictionary<string, string>();
+        if (!resp.TryGetValue("_c", out var contentBoxed)) return Empty(resp, "no _c key");
         var content = ConvertToStringKeyed(contentBoxed);
-        if (content is null) return new Dictionary<string, string>();
-        if (!content.TryGetValue("FetchLaunchableApplicationsEventResponseDictionary", out var appsBoxed))
-            return new Dictionary<string, string>();
-        var apps = ConvertToStringKeyed(appsBoxed);
-        if (apps is null) return new Dictionary<string, string>();
+        if (content is null) return Empty(resp, "_c had non-string keys");
+
+        // Two known response shapes:
+        //   pyatv (older docs): _c["FetchLaunchableApplicationsEventResponseDictionary"][bundleId] = name
+        //   Swift sibling + current tvOS: _c[bundleId] = name (flat — _c IS the apps dict)
+        // Try the wrapper first, fall back to the flat shape.
+        IDictionary<string, object?>? apps = null;
+        if (content.TryGetValue("FetchLaunchableApplicationsEventResponseDictionary", out var appsBoxed))
+            apps = ConvertToStringKeyed(appsBoxed);
+        if (apps is null && content.Count > 0)
+            apps = content;   // flat shape: _c itself is the bundleId → name map
+
+        if (apps is null || apps.Count == 0)
+            return Empty(resp, $"no apps in response (_c keys: [{string.Join(", ", content.Keys)}])");
 
         var result = new Dictionary<string, string>(apps.Count);
         foreach (var kv in apps)
-            result[kv.Key] = kv.Value?.ToString() ?? string.Empty;
+        {
+            if (kv.Key is null) continue;
+            // Filter out non-app entries (anything where the value isn't a string —
+            // e.g. status fields the flat-shape response might inline alongside apps).
+            if (kv.Value is not string s) continue;
+            result[kv.Key] = s;
+        }
+        if (CompanionTrace.IsEnabled)
+            CompanionTrace.Write("RECV", $"FetchLaunchableApplicationsEvent parsed {result.Count} apps");
         return result;
+
+        static IReadOnlyDictionary<string, string> Empty(IDictionary<string, object?> resp, string why)
+        {
+            if (CompanionTrace.IsEnabled)
+                CompanionTrace.Write("RECV", $"FetchLaunchableApplicationsEvent empty: {why}");
+            return new Dictionary<string, string>();
+        }
     }
 
     /// <summary>
