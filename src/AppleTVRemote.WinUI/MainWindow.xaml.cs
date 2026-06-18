@@ -584,7 +584,7 @@ public sealed partial class MainWindow : WindowEx
 
     // ─── App launcher (slides out to the left) ─────────────────────
 
-    private const int LauncherPanelWidth = 300;     // 4 tiles wide @ 68 px ItemWidth + scrollbar/margin
+    private const int LauncherPanelWidth = 320;     // 4 tiles wide @ 68 px ItemWidth + scrollbar/margin
     private const int RemoteWidth        = 200;
     private static readonly TimeSpan LauncherAnimDuration = TimeSpan.FromMilliseconds(220);
 
@@ -636,18 +636,20 @@ public sealed partial class MainWindow : WindowEx
     /// <summary>
     /// Drive the slide-out animation on a 60 fps DispatcherQueueTimer.
     /// WinUI/WinAppSDK has no built-in animator for GridLength or
-    /// WindowEx.Width, so we step both values together with a CubicEase-out
-    /// curve matching the WPF sibling. As LauncherCol shrinks the remote in
-    /// Column 1 slides leftward into the vacated space — the macOS-popover
-    /// behavior the user asked for.
+    /// WindowEx.Width, so we step every value together with a CubicEase-out
+    /// curve matching the WPF sibling. The remote's RIGHT edge stays
+    /// anchored in screen space — the launcher slides out leftward from
+    /// behind the remote on open and slides back in on close.
     /// </summary>
     private void AnimateLauncher(double targetColWidth, Action? onCompleted = null)
     {
         _launcherAnimTimer?.Stop();
-        double startCol = LauncherCol.Width.Value;
-        double startWin = Width;
-        double targetWin = RemoteWidth + targetColWidth;
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        double startCol   = LauncherCol.Width.Value;
+        double startWin   = Width;
+        double startX     = this.X;                     // WinUIEx exposes window position in DIPs
+        double targetWin  = RemoteWidth + targetColWidth;
+        double targetX    = startX + startWin - targetWin;   // keeps right edge fixed
+        var sw    = System.Diagnostics.Stopwatch.StartNew();
         var total = LauncherAnimDuration;
 
         _launcherAnimTimer = DispatcherQueue.CreateTimer();
@@ -656,13 +658,16 @@ public sealed partial class MainWindow : WindowEx
         {
             double t = Math.Clamp(sw.Elapsed.TotalMilliseconds / total.TotalMilliseconds, 0, 1);
             double e = 1 - Math.Pow(1 - t, 3);  // cubic ease-out
+            double w = startWin + (targetWin - startWin) * e;
+            double x = startX   + (targetX   - startX)   * e;
             LauncherCol.Width = new GridLength(startCol + (targetColWidth - startCol) * e);
-            Width             = startWin + (targetWin     - startWin)    * e;
+            // Use MoveAndResize so X and Width change in the same frame, no flicker.
+            this.MoveAndResize(x, this.Y, w, this.Height);
             if (t >= 1)
             {
                 timer.Stop();
                 LauncherCol.Width = new GridLength(targetColWidth);
-                Width             = targetWin;
+                this.MoveAndResize(targetX, this.Y, targetWin, this.Height);
                 onCompleted?.Invoke();
             }
         };

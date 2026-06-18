@@ -518,7 +518,7 @@ public partial class MainWindow : Window
 
     // ─── App launcher (slides out to the left) ─────────────────────
 
-    private const double LauncherPanelWidth = 300;     // 4 tiles wide @ 68 px ItemWidth + scrollbar/margin
+    private const double LauncherPanelWidth = 320;     // 4 tiles wide @ 68 px ItemWidth + scrollbar/margin
     private const double RemoteWidth        = 200;
     private static readonly TimeSpan LauncherAnimDuration = TimeSpan.FromMilliseconds(220);
 
@@ -588,12 +588,16 @@ public partial class MainWindow : Window
 
     private void AnimateLauncher(double targetWidth, Action? onCompleted = null)
     {
-        // Synchronously animate both the launcher column AND the window width.
-        // The remote sits in column 1; as column 0 (launcher) shrinks on close,
-        // the remote slides leftward into the launcher's vacated space —
-        // exactly the macOS popover behavior the user asked for.
+        // The remote's RIGHT edge must stay anchored at its current screen
+        // position. The launcher slides out to the LEFT of the remote on
+        // open, and slides back into the remote on close. To do that we
+        // animate Width (column 0 grows/shrinks) AND Left (window expands
+        // leftward / contracts rightward) so the right edge sits still.
         var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
         var duration = new Duration(LauncherAnimDuration);
+
+        double targetWinWidth = RemoteWidth + targetWidth;
+        double targetLeft     = Left + Width - targetWinWidth;   // keeps right edge fixed
 
         var colAnim = new DoubleAnimation
         {
@@ -604,7 +608,14 @@ public partial class MainWindow : Window
         };
         var winAnim = new DoubleAnimation
         {
-            To = RemoteWidth + targetWidth,
+            To = targetWinWidth,
+            Duration = duration,
+            EasingFunction = easing,
+            FillBehavior = FillBehavior.HoldEnd,
+        };
+        var leftAnim = new DoubleAnimation
+        {
+            To = targetLeft,
             Duration = duration,
             EasingFunction = easing,
             FillBehavior = FillBehavior.HoldEnd,
@@ -614,6 +625,7 @@ public partial class MainWindow : Window
 
         BeginAnimation(LauncherColWidthProperty, colAnim);
         BeginAnimation(WidthProperty, winAnim);
+        BeginAnimation(LeftProperty, leftAnim);
     }
 
     private async Task FetchAppsAsync(CompanionSession session)
