@@ -135,6 +135,30 @@ public sealed class CompanionSession : IAsyncDisposable
         };
         await SendRequestAsync("_sessionStart", sessionStart, timeout: TimeSpan.FromSeconds(10), cancel: cancel).ConfigureAwait(false);
 
+        // 3b. TVRCSessionStart — "TV Remote Client" session registration.
+        // Per pyatv PR #2855 (and matching open issues home-assistant/core
+        // #171666, pyatv #2845/#2868): newer tvOS (notably Apple TV 4K gen 3
+        // on tvOS 26.x) refuses to bind handlers for
+        // FetchLaunchableApplicationsEvent / _fetchAttentionState until a
+        // TVRC session is registered with the tvremoted process. Older
+        // tvOS responds with an error, which we swallow — safe to always
+        // send (pyatv: "Older devices that do not implement this message
+        // return an error, so it is safe to always send it.")
+        try
+        {
+            var tvrc = new Dictionary<string, object?>
+            {
+                { "ProtocolVersionKey", "1.2" },
+            };
+            await SendRequestAsync("TVRCSessionStart", tvrc, timeout: TimeSpan.FromSeconds(10), cancel: cancel).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("No request handler", StringComparison.OrdinalIgnoreCase))
+        {
+            // Older firmware doesn't know this command — that's fine, skip.
+            if (CompanionTrace.IsEnabled)
+                CompanionTrace.Write("SEND", "TVRCSessionStart not supported on this firmware (older tvOS), continuing");
+        }
+
         // 4. _tiStart — text-input session start, empty content.
         await SendRequestAsync("_tiStart", new Dictionary<string, object?>(), timeout: TimeSpan.FromSeconds(10), cancel: cancel).ConfigureAwait(false);
 
