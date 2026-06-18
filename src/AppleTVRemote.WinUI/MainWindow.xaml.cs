@@ -641,14 +641,22 @@ public sealed partial class MainWindow : WindowEx
     /// anchored in screen space — the launcher slides out leftward from
     /// behind the remote on open and slides back in on close.
     /// </summary>
-    private void AnimateLauncher(double targetColWidth, Action? onCompleted = null)
+    private void AnimateLauncher(double targetColWidthDip, Action? onCompleted = null)
     {
         _launcherAnimTimer?.Stop();
-        double startCol   = LauncherCol.Width.Value;
-        double startWin   = Width;
-        double startX     = this.X;                     // WinUIEx exposes window position in DIPs
-        double targetWin  = RemoteWidth + targetColWidth;
-        double targetX    = startX + startWin - targetWin;   // keeps right edge fixed
+
+        // WindowEx.Width is in DIPs; AppWindow.Position/Size are in physical
+        // pixels. We do the entire animation in pixels using AppWindow
+        // (MoveAndResize takes a single RectInt32 so X + Width update
+        // atomically, no flicker) and convert our DIP constants once at the
+        // start using the current rasterization scale.
+        double startColDip = LauncherCol.Width.Value;
+        var startPos  = AppWindow.Position;
+        var startSize = AppWindow.Size;
+        double scale  = Width > 0 ? (double)startSize.Width / Width : 1.0;
+
+        int targetWinPx = (int)Math.Round((RemoteWidth + targetColWidthDip) * scale);
+        int targetX     = startPos.X + startSize.Width - targetWinPx;   // right edge stays fixed
         var sw    = System.Diagnostics.Stopwatch.StartNew();
         var total = LauncherAnimDuration;
 
@@ -658,16 +666,15 @@ public sealed partial class MainWindow : WindowEx
         {
             double t = Math.Clamp(sw.Elapsed.TotalMilliseconds / total.TotalMilliseconds, 0, 1);
             double e = 1 - Math.Pow(1 - t, 3);  // cubic ease-out
-            double w = startWin + (targetWin - startWin) * e;
-            double x = startX   + (targetX   - startX)   * e;
-            LauncherCol.Width = new GridLength(startCol + (targetColWidth - startCol) * e);
-            // Use MoveAndResize so X and Width change in the same frame, no flicker.
-            this.MoveAndResize(x, this.Y, w, this.Height);
+            int w = (int)(startSize.Width + (targetWinPx - startSize.Width) * e);
+            int x = (int)(startPos.X      + (targetX     - startPos.X)      * e);
+            LauncherCol.Width = new GridLength(startColDip + (targetColWidthDip - startColDip) * e);
+            AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(x, startPos.Y, w, startSize.Height));
             if (t >= 1)
             {
                 timer.Stop();
-                LauncherCol.Width = new GridLength(targetColWidth);
-                this.MoveAndResize(targetX, this.Y, targetWin, this.Height);
+                LauncherCol.Width = new GridLength(targetColWidthDip);
+                AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(targetX, startPos.Y, targetWinPx, startSize.Height));
                 onCompleted?.Invoke();
             }
         };
