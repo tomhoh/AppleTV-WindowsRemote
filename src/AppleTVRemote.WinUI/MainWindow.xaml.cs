@@ -584,12 +584,14 @@ public sealed partial class MainWindow : WindowEx
 
     // ─── App launcher (slides out to the left) ─────────────────────
 
-    private const int LauncherPanelWidth = 200;
+    private const int LauncherPanelWidth = 300;     // 4 tiles wide @ 68 px ItemWidth + scrollbar/margin
     private const int RemoteWidth        = 200;
+    private static readonly TimeSpan LauncherAnimDuration = TimeSpan.FromMilliseconds(220);
 
     private System.Collections.Generic.IReadOnlyDictionary<string, string>? _cachedApps;
     private string? _launcherFilter;
     private bool    _launcherOpen;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _launcherAnimTimer;
 
     private async void OnAppsClicked(object sender, RoutedEventArgs e)
     {
@@ -600,6 +602,14 @@ public sealed partial class MainWindow : WindowEx
 
         OpenLauncher();
         if (_cachedApps is null) await FetchAppsAsync(session);
+    }
+
+    private async void OnLauncherRefreshClicked(object sender, RoutedEventArgs e)
+    {
+        var session = await EnsureSessionAsync();
+        if (session is null) return;
+        _cachedApps = null;
+        await FetchAppsAsync(session);
     }
 
     private void OnLauncherCloseClicked(object sender, RoutedEventArgs e) => CloseLauncher();
@@ -614,17 +624,49 @@ public sealed partial class MainWindow : WindowEx
     {
         _launcherOpen = true;
         LauncherPanel.Visibility = Visibility.Visible;
-        LauncherCol.Width = new GridLength(LauncherPanelWidth);
-        // WinUIEx WindowEx exposes Width/Height as DIPs.
-        Width = RemoteWidth + LauncherPanelWidth;
+        AnimateLauncher(LauncherPanelWidth);
     }
 
     private void CloseLauncher()
     {
         _launcherOpen = false;
-        LauncherCol.Width = new GridLength(0);
-        Width = RemoteWidth;
-        LauncherPanel.Visibility = Visibility.Collapsed;
+        AnimateLauncher(0, onCompleted: () => LauncherPanel.Visibility = Visibility.Collapsed);
+    }
+
+    /// <summary>
+    /// Drive the slide-out animation on a 60 fps DispatcherQueueTimer.
+    /// WinUI/WinAppSDK has no built-in animator for GridLength or
+    /// WindowEx.Width, so we step both values together with a CubicEase-out
+    /// curve matching the WPF sibling. As LauncherCol shrinks the remote in
+    /// Column 1 slides leftward into the vacated space — the macOS-popover
+    /// behavior the user asked for.
+    /// </summary>
+    private void AnimateLauncher(double targetColWidth, Action? onCompleted = null)
+    {
+        _launcherAnimTimer?.Stop();
+        double startCol = LauncherCol.Width.Value;
+        double startWin = Width;
+        double targetWin = RemoteWidth + targetColWidth;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var total = LauncherAnimDuration;
+
+        _launcherAnimTimer = DispatcherQueue.CreateTimer();
+        _launcherAnimTimer.Interval = TimeSpan.FromMilliseconds(16); // ~60 fps
+        _launcherAnimTimer.Tick += (timer, _) =>
+        {
+            double t = Math.Clamp(sw.Elapsed.TotalMilliseconds / total.TotalMilliseconds, 0, 1);
+            double e = 1 - Math.Pow(1 - t, 3);  // cubic ease-out
+            LauncherCol.Width = new GridLength(startCol + (targetColWidth - startCol) * e);
+            Width             = startWin + (targetWin     - startWin)    * e;
+            if (t >= 1)
+            {
+                timer.Stop();
+                LauncherCol.Width = new GridLength(targetColWidth);
+                Width             = targetWin;
+                onCompleted?.Invoke();
+            }
+        };
+        _launcherAnimTimer.Start();
     }
 
     private async Task FetchAppsAsync(CompanionSession session)
@@ -637,11 +679,38 @@ public sealed partial class MainWindow : WindowEx
             var apps = await session.ListAppsAsync();
             _cachedApps = apps;
             RenderApps();
+            PrefetchIcons(apps.Keys);
         }
         catch (Exception ex)
         {
             LauncherStatus.Text = $"Couldn't load apps: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Kick off iTunes-Search lookups for every bundle id the moment the list
+    /// arrives, so re-opens / scroll find everything already warmed in
+    /// <see cref="AppIconCache"/>. Concurrency capped at 8 to stay polite.
+    /// </summary>
+    private static void PrefetchIcons(IEnumerable<string> bundleIds)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var gate = new System.Threading.SemaphoreSlim(8);
+            var tasks = new System.Collections.Generic.List<Task>();
+            foreach (var id in bundleIds)
+            {
+                await gate.WaitAsync().ConfigureAwait(false);
+                tasks.Add(Task.Run(async () =>
+                {
+                    try { await AppIconCache.GetAsync(id).ConfigureAwait(false); }
+                    catch { /* AppIconCache already swallows individual errors */ }
+                    finally { gate.Release(); }
+                }));
+            }
+            try { await Task.WhenAll(tasks).ConfigureAwait(false); }
+            catch { /* aggregate exceptions ignored — best effort */ }
+        });
     }
 
     private void RenderApps()
@@ -685,8 +754,8 @@ public sealed partial class MainWindow : WindowEx
         // iTunes Search returns (≈ one HTTP round-trip per uncached app).
         var tile = new Border
         {
-            Width = 48, Height = 48,
-            CornerRadius = new CornerRadius(11),
+            Width = 52, Height = 52,
+            CornerRadius = new CornerRadius(12),
             Margin = new Thickness(0, 4, 0, 2),
             Background = new LinearGradientBrush
             {
@@ -702,7 +771,7 @@ public sealed partial class MainWindow : WindowEx
             Child = new TextBlock
             {
                 Text = initial,
-                FontSize = 22,
+                FontSize = 24,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(Colors.White),
                 HorizontalAlignment = HorizontalAlignment.Center,

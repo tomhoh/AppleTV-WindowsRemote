@@ -74,20 +74,30 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- Header -->
+            <!-- Header: "Apps" + refresh + close-chevron -->
             <Grid Grid.Row="0" Margin="10,12,10,4">
                 <TextBlock Text="Apps"
                            FontSize="14"
                            FontWeight="SemiBold"
                            Foreground="{StaticResource ButtonGlyph}"
                            VerticalAlignment="Center" />
-                <Button x:Name="LauncherCloseBtn"
-                        Style="{StaticResource CircleButton}"
-                        FontFamily="Segoe MDL2 Assets"
-                        Content="&#xE76C;"
-                        HorizontalAlignment="Right"
-                        ToolTipService.ToolTip="Close app launcher"
-                        Click="OnLauncherCloseClicked" />
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Spacing="6">
+                    <Button x:Name="LauncherRefreshBtn"
+                            Style="{StaticResource CircleButton}"
+                            FontFamily="Segoe MDL2 Assets"
+                            Content="&#xE72C;"
+                            ToolTipService.ToolTip="Refresh app list"
+                            Click="OnLauncherRefreshClicked" />
+                    <Button x:Name="LauncherCloseBtn"
+                            Style="{StaticResource CircleButton}"
+                            FontFamily="Segoe MDL2 Assets"
+                            Content="&#xE76C;"
+                            ToolTipService.ToolTip="Close app launcher"
+                            Click="OnLauncherCloseClicked" />
+                </StackPanel>
             </Grid>
 
             <!-- Search box -->
@@ -125,8 +135,8 @@
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <VariableSizedWrapGrid Orientation="Horizontal"
-                                                       ItemWidth="60"
-                                                       ItemHeight="78" />
+                                                       ItemWidth="68"
+                                                       ItemHeight="82" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                     </ItemsControl>

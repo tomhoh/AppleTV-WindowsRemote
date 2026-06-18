@@ -518,13 +518,33 @@ public partial class MainWindow : Window
 
     // ─── App launcher (slides out to the left) ─────────────────────
 
-    private const double LauncherPanelWidth = 200;
+    private const double LauncherPanelWidth = 300;     // 4 tiles wide @ 68 px ItemWidth + scrollbar/margin
     private const double RemoteWidth        = 200;
+    private static readonly TimeSpan LauncherAnimDuration = TimeSpan.FromMilliseconds(220);
 
     /// <summary>Last-fetched app list, cached so opening the launcher is instant after the first session.</summary>
     private IReadOnlyDictionary<string, string>? _cachedApps;
     private string? _launcherFilter;
     private bool    _launcherOpen;
+
+    /// <summary>
+    /// Animatable proxy for LauncherCol.Width. GridLength itself isn't an
+    /// animatable type; we drive this DP via a DoubleAnimation and forward
+    /// each tick to the column width — so the launcher pane visibly slides
+    /// in/out instead of snapping while the window resizes.
+    /// </summary>
+    public static readonly DependencyProperty LauncherColWidthProperty =
+        DependencyProperty.Register(nameof(LauncherColWidthValue), typeof(double), typeof(MainWindow),
+            new PropertyMetadata(0.0, (d, e) =>
+            {
+                var w = (MainWindow)d;
+                w.LauncherCol.Width = new GridLength((double)e.NewValue);
+            }));
+    public double LauncherColWidthValue
+    {
+        get => (double)GetValue(LauncherColWidthProperty);
+        set => SetValue(LauncherColWidthProperty, value);
+    }
 
     private async void OnAppsClicked(object sender, RoutedEventArgs e)
     {
@@ -535,6 +555,14 @@ public partial class MainWindow : Window
 
         OpenLauncher();
         if (_cachedApps is null) await FetchAppsAsync(session);
+    }
+
+    private async void OnLauncherRefreshClicked(object sender, RoutedEventArgs e)
+    {
+        var session = await EnsureSessionAsync();
+        if (session is null) return;
+        _cachedApps = null;
+        await FetchAppsAsync(session);
     }
 
     private void OnLauncherCloseClicked(object sender, RoutedEventArgs e) => CloseLauncher();
@@ -560,26 +588,31 @@ public partial class MainWindow : Window
 
     private void AnimateLauncher(double targetWidth, Action? onCompleted = null)
     {
-        // Animate both the launcher column AND the window width together so
-        // the remote stays anchored to the right edge of the popup.
+        // Synchronously animate both the launcher column AND the window width.
+        // The remote sits in column 1; as column 0 (launcher) shrinks on close,
+        // the remote slides leftward into the launcher's vacated space —
+        // exactly the macOS popover behavior the user asked for.
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var duration = new Duration(LauncherAnimDuration);
+
         var colAnim = new DoubleAnimation
         {
             To = targetWidth,
-            Duration = new Duration(TimeSpan.FromMilliseconds(180)),
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            Duration = duration,
+            EasingFunction = easing,
+            FillBehavior = FillBehavior.HoldEnd,
         };
         var winAnim = new DoubleAnimation
         {
             To = RemoteWidth + targetWidth,
-            Duration = colAnim.Duration,
-            EasingFunction = colAnim.EasingFunction,
+            Duration = duration,
+            EasingFunction = easing,
+            FillBehavior = FillBehavior.HoldEnd,
         };
         if (onCompleted is not null)
             winAnim.Completed += (_, _) => onCompleted();
 
-        // GridLength is not animatable, so we drive the column via its underlying Width
-        // through a DoubleAnimation on a Storyboard target.
-        LauncherCol.Width = new GridLength(targetWidth);  // snap (animations on GridLength are awkward)
+        BeginAnimation(LauncherColWidthProperty, colAnim);
         BeginAnimation(WidthProperty, winAnim);
     }
 
@@ -593,11 +626,39 @@ public partial class MainWindow : Window
             var apps = await session.ListAppsAsync();
             _cachedApps = apps;
             RenderApps();
+            PrefetchIcons(apps.Keys);
         }
         catch (Exception ex)
         {
             LauncherStatus.Text = $"Couldn't load apps: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Kick off iTunes-Search lookups for every bundle id the moment the list
+    /// arrives, so re-opening the launcher (or scrolling) finds everything
+    /// already warmed in <see cref="AppIconCache"/>. Concurrency capped at 8
+    /// to stay polite to iTunes. Errors are swallowed by AppIconCache itself.
+    /// </summary>
+    private static void PrefetchIcons(IEnumerable<string> bundleIds)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var gate = new System.Threading.SemaphoreSlim(8);
+            var tasks = new List<Task>();
+            foreach (var id in bundleIds)
+            {
+                await gate.WaitAsync().ConfigureAwait(false);
+                tasks.Add(Task.Run(async () =>
+                {
+                    try { await AppIconCache.GetAsync(id).ConfigureAwait(false); }
+                    catch { /* AppIconCache already swallows individual errors */ }
+                    finally { gate.Release(); }
+                }));
+            }
+            try { await Task.WhenAll(tasks).ConfigureAwait(false); }
+            catch { /* aggregate exceptions ignored — best effort */ }
+        });
     }
 
     private void RenderApps()
@@ -638,15 +699,15 @@ public partial class MainWindow : Window
         // iTunes Search returns (≈ one HTTP round-trip per uncached app).
         var tile = new Border
         {
-            Width = 48, Height = 48,
-            CornerRadius = new CornerRadius(11),
+            Width = 52, Height = 52,
+            CornerRadius = new CornerRadius(12),
             Margin = new Thickness(0, 4, 0, 2),
             ClipToBounds = true,
             Background = new LinearGradientBrush(top, bottom, new Point(0, 0), new Point(1, 1)),
             Child = new TextBlock
             {
                 Text = initial,
-                FontSize = 22,
+                FontSize = 24,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brushes.White,
                 HorizontalAlignment = HorizontalAlignment.Center,
