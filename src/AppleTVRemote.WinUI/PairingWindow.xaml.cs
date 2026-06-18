@@ -296,7 +296,12 @@ public sealed partial class PairingWindow : WindowEx
             await conn.ConnectAsync(ct);
             AppendLog("TCP connected, sending M1 to wake PIN display");
 
-            var pairingId = Encoding.ASCII.GetBytes(Guid.NewGuid().ToString());
+            // Swift's UUID().uuidString is UPPERCASE on Apple platforms; ours
+            // is lowercase. The user's exact TV launches apps for the Mac
+            // sibling but not us — UUID case is the last byte-level wire
+            // difference we haven't matched. Test theory: maybe the TV's
+            // app-launcher permission check is case-sensitive.
+            var pairingId = Encoding.ASCII.GetBytes(Guid.NewGuid().ToString().ToUpperInvariant());
             var setup = new CompanionPairSetup(conn, timeout: TimeSpan.FromMinutes(2));
             var creds = await setup.RunAsync(
                 getPinAsync: async () =>
