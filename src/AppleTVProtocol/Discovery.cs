@@ -221,9 +221,27 @@ public sealed class DeviceDiscovery : IDisposable
     private readonly ConcurrentDictionary<string, AppleTVDevice> _devices = new(StringComparer.OrdinalIgnoreCase);
     private readonly string[] _services;
     private System.Threading.Timer? _requeryTimer;
+    private CancellationTokenSource? _subnetScanCts;
 
     /// <summary>How often to re-issue the mDNS query while running.</summary>
     public TimeSpan RequeryInterval { get; set; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// When true (default), <see cref="Start"/> also kicks off a
+    /// parallel subnet sweep that unicast-probes every IPv4 address in
+    /// the user's local /24 networks. Multicast is unreliable on Windows
+    /// (Makaretu's known multi-NIC IGMP-join bug; Tailscale / Hyper-V /
+    /// VPN virtual adapters break it further) — the subnet sweep is the
+    /// belt-and-suspenders fallback that finds every responsive Apple
+    /// TV regardless of whether multicast made it there.
+    /// </summary>
+    public bool SubnetSweepEnabled { get; set; } = true;
+
+    /// <summary>Per-probe timeout for the subnet sweep. Default 1.5 s.</summary>
+    public TimeSpan SubnetProbeTimeout { get; set; } = TimeSpan.FromMilliseconds(1500);
+
+    /// <summary>Max concurrent unicast probes during the subnet sweep.</summary>
+    public int SubnetProbeConcurrency { get; set; } = 32;
 
     /// <summary>Raised when a new device is fully resolved (SRV + A/AAAA + TXT all present).</summary>
     public event EventHandler<AppleTVDevice>? Discovered;
@@ -338,6 +356,106 @@ public sealed class DeviceDiscovery : IDisposable
             state: null,
             dueTime:  RequeryInterval,
             period:   RequeryInterval);
+
+        if (SubnetSweepEnabled)
+        {
+            _subnetScanCts?.Cancel();
+            _subnetScanCts?.Dispose();
+            _subnetScanCts = new CancellationTokenSource();
+            _ = Task.Run(() => SubnetSweepAsync(_subnetScanCts.Token));
+        }
+    }
+
+    /// <summary>
+    /// Probe every IPv4 address in the local /24 subnet(s) via the
+    /// per-IP <see cref="UnicastProbeAsync"/>. Each successful probe
+    /// yields a fully-resolved <see cref="AppleTVDevice"/> with TXT/SRV
+    /// — the device deduplicates against multicast hits via the same
+    /// <c>_devices[FullName]</c> dict so the UI never sees doubles.
+    /// </summary>
+    private async Task SubnetSweepAsync(CancellationToken ct)
+    {
+        IReadOnlyList<IPAddress> addresses;
+        try { addresses = EnumerateLocalSubnetAddresses(); }
+        catch { return; }
+        if (addresses.Count == 0) return;
+
+        using var gate = new System.Threading.SemaphoreSlim(SubnetProbeConcurrency);
+        var tasks = new List<Task>(addresses.Count);
+        foreach (var ip in addresses)
+        {
+            if (ct.IsCancellationRequested) break;
+            await gate.WaitAsync(ct).ConfigureAwait(false);
+            tasks.Add(Task.Run(async () =>
+            {
+                try
+                {
+                    var dev = await UnicastProbeAsync(ip, SubnetProbeTimeout, ct).ConfigureAwait(false);
+                    if (dev is null) return;
+                    if (_devices.TryAdd(dev.FullName, dev))
+                        Discovered?.Invoke(this, dev);
+                }
+                catch { /* one bad IP shouldn't kill the sweep */ }
+                finally { gate.Release(); }
+            }, ct));
+        }
+        try { await Task.WhenAll(tasks).ConfigureAwait(false); }
+        catch { /* swallow per-task exceptions; we logged what mattered */ }
+    }
+
+    /// <summary>
+    /// Enumerate IPv4 addresses in the user's local /24 subnet(s), one
+    /// per address. Filters out loopback, link-local, and the obvious
+    /// virtual adapters (Tailscale, Hyper-V, WSL, VPN, VirtualBox,
+    /// VMware) since those usually point at empty or one-host overlay
+    /// networks and just waste probes.
+    /// </summary>
+    private static IReadOnlyList<IPAddress> EnumerateLocalSubnetAddresses()
+    {
+        var seen = new HashSet<uint>();
+        var result = new List<IPAddress>();
+
+        foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+            if (nic.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback) continue;
+            if (nic.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Tunnel)   continue;
+
+            var desc = (nic.Description ?? string.Empty);
+            if (desc.Contains("Tailscale", StringComparison.OrdinalIgnoreCase) ||
+                desc.Contains("Hyper-V",    StringComparison.OrdinalIgnoreCase) ||
+                desc.Contains("WSL",        StringComparison.OrdinalIgnoreCase) ||
+                desc.Contains("VPN",        StringComparison.OrdinalIgnoreCase) ||
+                desc.Contains("VirtualBox", StringComparison.OrdinalIgnoreCase) ||
+                desc.Contains("VMware",     StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            foreach (var ua in nic.GetIPProperties().UnicastAddresses)
+            {
+                if (ua.Address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                var ipBytes = ua.Address.GetAddressBytes();
+                // Skip link-local 169.254/16
+                if (ipBytes[0] == 169 && ipBytes[1] == 254) continue;
+                // Force /24: assume the user's TV is on the same /24
+                // segment as them. (Most consumer routers; bigger nets
+                // would explode probe count.)
+                uint network = ((uint)ipBytes[0] << 24) | ((uint)ipBytes[1] << 16) | ((uint)ipBytes[2] << 8);
+                if (!seen.Add(network)) continue;
+                uint myHost = ipBytes[3];
+                for (uint h = 1; h < 255; h++)
+                {
+                    if (h == myHost) continue;
+                    var probe = new IPAddress(new byte[] {
+                        (byte)((network >> 24) & 0xff),
+                        (byte)((network >> 16) & 0xff),
+                        (byte)((network >> 8) & 0xff),
+                        (byte)h,
+                    });
+                    result.Add(probe);
+                }
+            }
+        }
+        return result;
     }
 
     private void Requery()
@@ -365,6 +483,9 @@ public sealed class DeviceDiscovery : IDisposable
 
     public void Dispose()
     {
+        _subnetScanCts?.Cancel();
+        _subnetScanCts?.Dispose();
+        _subnetScanCts = null;
         _requeryTimer?.Dispose();
         _requeryTimer = null;
         _sd.ServiceInstanceDiscovered -= OnServiceInstanceDiscovered;
