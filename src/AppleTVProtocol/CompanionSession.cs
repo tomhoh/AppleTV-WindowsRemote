@@ -545,9 +545,30 @@ public sealed class CompanionSession : IAsyncDisposable
             case CompanionMessageType.Event:
                 // Inbound events (e.g. _iMC media-control updates) don't
                 // require a response — they're just keepalive-by-side-effect.
+                // Surface _iMC's inner _c dict to NowPlayingUpdated so the
+                // UI can render a Now-Playing banner. The actual contents
+                // depend on the TV state: minimal `_mcF` flags when nothing
+                // is playing, richer fields (title, artist, app id) when
+                // active media exists.
+                if (identifier == "_iMC")
+                {
+                    IDictionary<string, object?>? content = null;
+                    if (dict.TryGetValue("_c", out var contentBoxed))
+                        content = ConvertToStringKeyed(contentBoxed);
+                    NowPlayingUpdated?.Invoke(this,
+                        NowPlayingUpdate.FromInnerDict(content ?? new Dictionary<string, object?>()));
+                }
                 return;
         }
     }
+
+    /// <summary>
+    /// Raised whenever the TV pushes an <c>_iMC</c> (Media Control) event.
+    /// The payload is parsed best-effort from the inner <c>_c</c> dict —
+    /// most fields are optional and depend on whether media is actually
+    /// playing on the TV.
+    /// </summary>
+    public event EventHandler<NowPlayingUpdate>? NowPlayingUpdated;
 
     /// <summary>
     /// Coerce OPACK's various numeric encodings to <see cref="int"/>.

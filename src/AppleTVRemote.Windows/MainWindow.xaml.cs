@@ -178,6 +178,25 @@ public partial class MainWindow : Window
         return b;
     }
 
+    /// <summary>
+    /// Public hook for the tray-icon quick-switch menu: refresh the
+    /// stored-device list and pre-select the entry with this DeviceId.
+    /// Called from App.OnDeviceQuickSwitchClicked so the popup opens
+    /// already pointing at the device the user picked from the tray.
+    /// </summary>
+    public void SelectStoredDevice(string deviceId)
+    {
+        RefreshDevices();
+        foreach (var item in DeviceCombo.Items)
+        {
+            if (item is StoredCredentials sc && sc.DeviceId == deviceId)
+            {
+                DeviceCombo.SelectedItem = item;
+                break;
+            }
+        }
+    }
+
     private void RefreshDevices()
     {
         DeviceCombo.ItemsSource = null;
@@ -396,6 +415,36 @@ public partial class MainWindow : Window
     private async void OnPowerClicked(object sender, RoutedEventArgs e)
         => await DispatchAsync(HidCommand.Wake);
 
+    // Home: send HID down on press, up on release — that way the TV sees the
+    // user's actual hold duration. A short tap goes to the home screen; a
+    // hold of ~0.7 s+ pops the tvOS app-switcher. PressAsync would send down
+    // + up back-to-back and we'd lose the hold-to-app-switcher gesture.
+    private async void OnHomeDown(object sender, MouseButtonEventArgs e)
+    {
+        try
+        {
+            var session = await EnsureSessionAsync();
+            if (session is null) return;
+            await session.SendHidAsync(HidCommand.Home, down: true);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Home failed: {ex.Message}", "Apple TV Remote",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            await TeardownActiveAsync();
+        }
+    }
+
+    private async void OnHomeUp(object sender, MouseButtonEventArgs e)
+    {
+        try
+        {
+            if (_session is null) return;   // down failed already; nothing to release
+            await _session.SendHidAsync(HidCommand.Home, down: false);
+        }
+        catch { /* swallow release errors; the next button press will rebuild */ }
+    }
+
     private async void OnVolumeClicked(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Border b) return;
@@ -484,6 +533,7 @@ public partial class MainWindow : Window
             await new CompanionPairVerify(conn).RunAsync(selected.Credentials);
             _conn          = conn;
             _session       = new CompanionSession(conn);
+            _session.NowPlayingUpdated += OnNowPlayingUpdated;
             _activeDevice  = selected;
 
             // Run the Companion session-init handshake.
@@ -509,11 +559,34 @@ public partial class MainWindow : Window
 
     private async Task TeardownActiveAsync()
     {
-        if (_session is { } s) { try { await s.DisposeAsync(); } catch { } }
+        if (_session is { } s)
+        {
+            try { s.NowPlayingUpdated -= OnNowPlayingUpdated; } catch { }
+            try { await s.DisposeAsync(); } catch { }
+        }
         if (_conn    is { } c) { try { await c.DisposeAsync(); } catch { } }
         _session = null;
         _conn = null;
         _activeDevice = null;
+        _ = Dispatcher.BeginInvoke(() => NowPlayingBanner.Visibility = Visibility.Collapsed);
+    }
+
+    // ─── Now-Playing banner ─────────────────────────────────────────
+
+    private void OnNowPlayingUpdated(object? sender, NowPlayingUpdate update)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!update.HasDisplayableMetadata)
+            {
+                NowPlayingBanner.Visibility = Visibility.Collapsed;
+                return;
+            }
+            NowPlayingTitle.Text  = update.Title  ?? string.Empty;
+            NowPlayingArtist.Text = string.Join(" · ", new[] { update.Artist, update.Album }
+                .Where(s => !string.IsNullOrWhiteSpace(s))!);
+            NowPlayingBanner.Visibility = Visibility.Visible;
+        });
     }
 
     // ─── App launcher (slides out to the left) ─────────────────────

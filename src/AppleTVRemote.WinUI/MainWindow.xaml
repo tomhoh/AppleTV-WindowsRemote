@@ -25,11 +25,10 @@
     </winuiex:WindowEx.SystemBackdrop>
 
     <Grid x:Name="Root" RequestedTheme="Default">
-        <Grid.ColumnDefinitions>
-            <!-- Launcher column animates 0 → 200 when toggled open. -->
-            <ColumnDefinition x:Name="LauncherCol" Width="0" />
-            <ColumnDefinition Width="200" />
-        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- Now-Playing banner (collapsed unless metadata) -->
+            <RowDefinition Height="*"    />   <!-- launcher + remote columns -->
+        </Grid.RowDefinitions>
         <Grid.Resources>
             <SolidColorBrush x:Key="ButtonMaterial"   Color="#33FFFFFF" />
             <SolidColorBrush x:Key="ButtonMaterialHv" Color="#55FFFFFF" />
@@ -63,6 +62,35 @@
                 <Setter Property="FontSize" Value="10" />
             </Style>
         </Grid.Resources>
+
+        <!-- ── Row 0: Now-Playing banner ── -->
+        <Border x:Name="NowPlayingBanner"
+                Grid.Row="0"
+                Margin="12,8,12,2"
+                Padding="10,6"
+                CornerRadius="10"
+                Background="{StaticResource ButtonMaterial}"
+                BorderBrush="{StaticResource ButtonStroke}"
+                BorderThickness="0.5"
+                Visibility="Collapsed">
+            <StackPanel Orientation="Vertical">
+                <TextBlock x:Name="NowPlayingTitle"
+                           FontSize="12" FontWeight="SemiBold"
+                           Foreground="{StaticResource ButtonGlyph}"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="NowPlayingArtist"
+                           FontSize="10"
+                           Foreground="{StaticResource ButtonGlyph}"
+                           Opacity="0.7"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="1">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="LauncherCol" Width="0" />
+            <ColumnDefinition Width="200" />
+        </Grid.ColumnDefinitions>
 
         <!-- ── Column 0: app launcher (slides out left) ── -->
         <Grid x:Name="LauncherPanel"
@@ -248,9 +276,14 @@
                 <Button Grid.Column="0" Style="{StaticResource PillButton}"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE76B;"
                         Tag="Menu"  Click="OnHidClicked" />
+                <!-- Home: separate down/up so the TV sees the actual hold
+                     duration. Held Home triggers the tvOS app-switcher. -->
                 <Button Grid.Column="1" Style="{StaticResource PillButton}"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE7F4;"
-                        Tag="Home"  Click="OnHidClicked" />
+                        Tag="Home"
+                        ToolTipService.ToolTip="Home (hold for app switcher)"
+                        PointerPressed="OnHomeDown"
+                        PointerReleased="OnHomeUp" />
                 <Button Grid.Column="2" Style="{StaticResource PillButton}"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE720;"
                         Tag="Siri"  Click="OnHidClicked" />
@@ -306,5 +339,6 @@
             </Grid>
         </StackPanel>
         </Grid>  <!-- Column 1 wrapper -->
+        </Grid>  <!-- Row 1 inner grid (launcher + remote columns) -->
     </Grid>
 </winuiex:WindowEx>

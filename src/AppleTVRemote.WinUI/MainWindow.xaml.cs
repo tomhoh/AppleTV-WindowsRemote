@@ -10,6 +10,7 @@
 // - Soft hover quadrant + center-disc hover feedback on the clickpad.
 
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using AppleTVProtocol;
 using Microsoft.UI;
@@ -134,6 +135,23 @@ public sealed partial class MainWindow : WindowEx
         {
             DeviceCombo.SelectedIndex = 0;
             DeviceCombo.Visibility = Visibility.Visible;
+        }
+    }
+
+    /// <summary>
+    /// Public hook for the tray-icon quick-switch menu. Refreshes the
+    /// stored-device list and pre-selects the entry with this DeviceId.
+    /// </summary>
+    public void SelectStoredDevice(string deviceId)
+    {
+        RefreshDevices();
+        foreach (var item in DeviceCombo.Items)
+        {
+            if (item is StoredCredentials sc && sc.DeviceId == deviceId)
+            {
+                DeviceCombo.SelectedItem = item;
+                break;
+            }
         }
     }
 
@@ -438,6 +456,33 @@ public sealed partial class MainWindow : WindowEx
     private async void OnPowerClicked(object sender, RoutedEventArgs e)
         => await DispatchAsync(HidCommand.Wake);
 
+    // Home: separate down/up so the TV sees actual hold duration. A short
+    // tap goes home; holding ~0.7 s+ triggers the tvOS app-switcher.
+    private async void OnHomeDown(object sender, PointerRoutedEventArgs e)
+    {
+        try
+        {
+            var session = await EnsureSessionAsync();
+            if (session is null) return;
+            await session.SendHidAsync(HidCommand.Home, down: true);
+        }
+        catch (Exception ex)
+        {
+            await ShowMessageAsync($"Home failed: {ex.Message}");
+            await TeardownActiveAsync();
+        }
+    }
+
+    private async void OnHomeUp(object sender, PointerRoutedEventArgs e)
+    {
+        try
+        {
+            if (_session is null) return;
+            await _session.SendHidAsync(HidCommand.Home, down: false);
+        }
+        catch { /* swallow release errors */ }
+    }
+
     private void OnCloseClicked(object sender, RoutedEventArgs e) => this.Hide();
 
     private async void OnVolumePointerPressed(object sender, PointerRoutedEventArgs e)
@@ -538,6 +583,7 @@ public sealed partial class MainWindow : WindowEx
             await new CompanionPairVerify(conn).RunAsync(selected.Credentials);
             _conn          = conn;
             _session       = new CompanionSession(conn);
+            _session.NowPlayingUpdated += OnNowPlayingUpdated;
             _activeDevice  = selected;
 
             // Run the Companion session-init handshake.
@@ -562,11 +608,35 @@ public sealed partial class MainWindow : WindowEx
 
     private async Task TeardownActiveAsync()
     {
-        if (_session is { } s) { try { await s.DisposeAsync(); } catch { } }
+        if (_session is { } s)
+        {
+            try { s.NowPlayingUpdated -= OnNowPlayingUpdated; } catch { }
+            try { await s.DisposeAsync(); } catch { }
+        }
         if (_conn    is { } c) { try { await c.DisposeAsync(); } catch { } }
         _session = null;
         _conn = null;
         _activeDevice = null;
+        DispatcherQueue?.TryEnqueue(() => NowPlayingBanner.Visibility = Visibility.Collapsed);
+    }
+
+    // ─── Now-Playing banner ─────────────────────────────────────────
+
+    private void OnNowPlayingUpdated(object? sender, NowPlayingUpdate update)
+    {
+        DispatcherQueue?.TryEnqueue(() =>
+        {
+            if (!update.HasDisplayableMetadata)
+            {
+                NowPlayingBanner.Visibility = Visibility.Collapsed;
+                return;
+            }
+            NowPlayingTitle.Text  = update.Title ?? string.Empty;
+            var sub = string.Join(" · ", new[] { update.Artist, update.Album }
+                .Where(s => !string.IsNullOrWhiteSpace(s)));
+            NowPlayingArtist.Text = sub;
+            NowPlayingBanner.Visibility = Visibility.Visible;
+        });
     }
 
     private async Task ShowMessageAsync(string text)

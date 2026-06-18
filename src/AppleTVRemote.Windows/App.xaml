@@ -14,12 +14,12 @@
                         ToolTipText="Apple TV Remote"
                         Visibility="Visible"
                         TrayLeftMouseUp="OnTrayLeftClicked">
+            <!-- ContextMenu is rebuilt on demand in code-behind so it can
+                 reflect the current paired-device list + "Open at login"
+                 state. The empty stub here exists so Hardcodet attaches
+                 the context-menu handler at all. -->
             <tb:TaskbarIcon.ContextMenu>
-                <ContextMenu>
-                    <MenuItem Header="Open"  Click="OnOpenClicked" />
-                    <Separator />
-                    <MenuItem Header="Exit"  Click="OnExitClicked" />
-                </ContextMenu>
+                <ContextMenu Opened="OnTrayMenuOpening" />
             </tb:TaskbarIcon.ContextMenu>
         </tb:TaskbarIcon>
     </Application.Resources>

@@ -11,6 +11,8 @@
 // and clean shutdown.
 
 using System;
+using System.Linq;
+using AppleTVProtocol;
 using H.NotifyIcon;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -23,6 +25,7 @@ public partial class App : Application
     private TaskbarIcon? _trayIcon;
     private MainWindow?  _popup;
     private readonly UISettings _uiSettings = new();
+    private readonly CredentialStore _store = new();
 
     public App()
     {
@@ -55,23 +58,79 @@ public partial class App : Application
             _trayIcon.Icon = System.Drawing.SystemIcons.Application;
         }
 
-        // Right-click context menu with Open + Exit.
+        // Right-click context menu — rebuilt every Opening so paired
+        // devices and "Open at login" check state stay fresh.
         //
         // H.NotifyIcon shows the ContextFlyout in an isolated popup
         // window that doesn't always route MenuFlyoutItem.Click back to
         // the App's UI thread reliably — the Command pattern bypasses
         // that and runs the delegate directly. Same reason we wire
-        // LeftClickCommand below instead of using a Click event.
-        var openItem = new MenuFlyoutItem { Text = "Open" };
-        openItem.Command = new RelayCommand(_ => TogglePopup());
-        var exitItem = new MenuFlyoutItem { Text = "Exit" };
-        exitItem.Command = new RelayCommand(_ => ExitApp());
-        _trayIcon.ContextFlyout = new MenuFlyout
-        {
-            Items = { openItem, new MenuFlyoutSeparator(), exitItem },
-        };
+        // LeftClickCommand above instead of using a Click event.
+        var flyout = new MenuFlyout();
+        flyout.Opening += (_, _) => RebuildTrayMenu(flyout);
+        _trayIcon.ContextFlyout = flyout;
+        RebuildTrayMenu(flyout);  // initial population
 
         _trayIcon.ForceCreate();
+    }
+
+    private void RebuildTrayMenu(MenuFlyout flyout)
+    {
+        flyout.Items.Clear();
+
+        // Paired devices (quick-switch).
+        StoredCredentials[] paired;
+        try { paired = _store.LoadAll().ToArray(); }
+        catch { paired = Array.Empty<StoredCredentials>(); }
+
+        if (paired.Length > 0)
+        {
+            foreach (var dev in paired)
+            {
+                var label = string.IsNullOrWhiteSpace(dev.DisplayName) ? "Apple TV" : dev.DisplayName;
+                if (!string.IsNullOrWhiteSpace(dev.Host)) label += $"  ({dev.Host})";
+                var item = new MenuFlyoutItem { Text = label };
+                var devId = dev.DeviceId;
+                item.Command = new RelayCommand(_ => SwitchToDevice(devId));
+                flyout.Items.Add(item);
+            }
+            flyout.Items.Add(new MenuFlyoutSeparator());
+        }
+
+        var openItem = new MenuFlyoutItem { Text = "Open" };
+        openItem.Command = new RelayCommand(_ => TogglePopup());
+        flyout.Items.Add(openItem);
+
+        var startupItem = new ToggleMenuFlyoutItem
+        {
+            Text      = "Open at login",
+            IsChecked = StartupRegistry.IsEnabled,
+        };
+        startupItem.Click += (_, _) =>
+        {
+            var exe = Environment.ProcessPath
+                   ?? System.Reflection.Assembly.GetEntryAssembly()?.Location;
+            if (!string.IsNullOrWhiteSpace(exe))
+                StartupRegistry.Toggle(exe);
+        };
+        flyout.Items.Add(startupItem);
+
+        flyout.Items.Add(new MenuFlyoutSeparator());
+        var exitItem = new MenuFlyoutItem { Text = "Exit" };
+        exitItem.Command = new RelayCommand(_ => ExitApp());
+        flyout.Items.Add(exitItem);
+    }
+
+    private void SwitchToDevice(string deviceId)
+    {
+        if (_popup is null)
+        {
+            _popup = new MainWindow();
+            _popup.Closed += (_, _) => _popup = null;
+        }
+        _popup.SelectStoredDevice(deviceId);
+        _popup.PositionNearTray();
+        _popup.Activate();
     }
 
     private void TogglePopup()
