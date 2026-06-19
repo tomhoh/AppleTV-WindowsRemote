@@ -114,6 +114,50 @@ public sealed class CredentialStore
         return result;
     }
 
+    // ── AirPlay credentials (separate from Companion; needed for the MRP
+    //    now-playing tunnel). Stored as <deviceId>.airplay so the *.json
+    //    glob in LoadAll never picks them up. ──
+
+    public void SaveAirPlay(string deviceId, AirPlay.AirPlayCredentials creds)
+    {
+        Directory.CreateDirectory(_root);
+        var dto = new AirPlayCredentialDto(
+            Convert.ToHexString(creds.Ltpk).ToLowerInvariant(),
+            Convert.ToHexString(creds.Ltsk).ToLowerInvariant(),
+            Convert.ToHexString(creds.AtvId).ToLowerInvariant(),
+            Convert.ToHexString(creds.ClientId).ToLowerInvariant());
+        File.WriteAllBytes(AirPlayPathFor(deviceId), JsonSerializer.SerializeToUtf8Bytes(dto, _jsonOpts));
+    }
+
+    public AirPlay.AirPlayCredentials? LoadAirPlay(string deviceId)
+    {
+        var file = AirPlayPathFor(deviceId);
+        if (!File.Exists(file)) return null;
+        try
+        {
+            var dto = JsonSerializer.Deserialize<AirPlayCredentialDto>(File.ReadAllBytes(file), _jsonOpts);
+            if (dto is null) return null;
+            return new AirPlay.AirPlayCredentials(
+                Convert.FromHexString(dto.Ltpk),
+                Convert.FromHexString(dto.Ltsk),
+                Convert.FromHexString(dto.AtvId),
+                Convert.FromHexString(dto.ClientId));
+        }
+        catch { return null; }
+    }
+
+    public bool ContainsAirPlay(string deviceId) => File.Exists(AirPlayPathFor(deviceId));
+
+    private string AirPlayPathFor(string deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
+            throw new ArgumentException("deviceId must not be empty", nameof(deviceId));
+        var sanitized = string.Join('_', deviceId.Split(Path.GetInvalidFileNameChars()));
+        return Path.Combine(_root, sanitized + ".airplay");
+    }
+
+    internal sealed record AirPlayCredentialDto(string Ltpk, string Ltsk, string AtvId, string ClientId);
+
     private string PathFor(string deviceId)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
