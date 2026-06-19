@@ -325,6 +325,18 @@ public sealed class CompanionSession : IAsyncDisposable
         await SendHidAsync(command, down: false, cancel: cancel).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Hold a button down for a fixed duration, then release — the gesture
+    /// the TV interprets as a "long press". Mirrors the Swift sibling's
+    /// CompanionSession.sendLongPress: HID down, sleep <paramref name="holdMs"/>,
+    /// HID up. Holding Home ≈1 s opens the tvOS app-switcher; holding Menu
+    /// the screensaver; holding Select the home-screen jiggle/edit mode.
+    /// Uses a programmatic, fixed hold rather than the user's physical
+    /// button-hold time so the TV reliably sees a full-duration press.
+    /// </summary>
+    public Task LongPressAsync(HidCommand command, int holdMs = 1000, CancellationToken cancel = default)
+        => PressAsync(command, TimeSpan.FromMilliseconds(holdMs), cancel);
+
     // ─── Touchpad / swipe ───
 
     /// <summary>Logical touchpad dimensions used by Apple's Siri Remote model. Coordinates 0..1000.</summary>

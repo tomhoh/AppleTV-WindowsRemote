@@ -276,14 +276,16 @@
                 <Button Grid.Column="0" Style="{StaticResource PillButton}"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE76B;"
                         Tag="Menu"  Click="OnHidClicked" />
-                <!-- Home: separate down/up so the TV sees the actual hold
-                     duration. Held Home triggers the tvOS app-switcher. -->
+                <!-- Home: tap → home screen, hold → tvOS app-switcher. A
+                     DispatcherQueueTimer started on press distinguishes them. -->
                 <Button Grid.Column="1" Style="{StaticResource PillButton}"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE7F4;"
                         Tag="Home"
                         ToolTipService.ToolTip="Home (hold for app switcher)"
                         PointerPressed="OnHomeDown"
-                        PointerReleased="OnHomeUp" />
+                        PointerReleased="OnHomeUp"
+                        PointerExited="OnHomeLeave"
+                        PointerCanceled="OnHomeLeave" />
                 <Button Grid.Column="2" Style="{StaticResource PillButton}"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE720;"
                         Tag="Siri"  Click="OnHidClicked" />

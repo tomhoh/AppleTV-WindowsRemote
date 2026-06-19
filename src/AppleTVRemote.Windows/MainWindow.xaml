@@ -355,15 +355,16 @@
                     <Button Grid.Column="0" Style="{StaticResource PillButton}"
                             FontFamily="Segoe MDL2 Assets" Content="&#xE76B;"
                             Tag="Menu"  ToolTip="Menu"      Click="OnHidClicked" />
-                    <!-- Home: separate down/up so the TV sees the actual hold
-                         duration. A held Home press triggers the tvOS app-switcher.
-                         Tap behavior (go to home screen) still works because the
-                         TV sees a fast down-up pair. -->
+                    <!-- Home: tap → home screen, hold → tvOS app-switcher.
+                         A DispatcherTimer started on press distinguishes the
+                         two: release before the threshold = tap; held past it =
+                         programmatic 1 s HID hold (matching the Swift port). -->
                     <Button Grid.Column="1" Style="{StaticResource PillButton}"
                             FontFamily="Segoe MDL2 Assets" Content="&#xE7F4;"
                             Tag="Home"  ToolTip="Home (hold for app switcher)"
                             PreviewMouseLeftButtonDown="OnHomeDown"
-                            PreviewMouseLeftButtonUp="OnHomeUp" />
+                            PreviewMouseLeftButtonUp="OnHomeUp"
+                            MouseLeave="OnHomeLeave" />
                     <Button Grid.Column="2" Style="{StaticResource PillButton}"
                             FontFamily="Segoe MDL2 Assets" Content="&#xE720;"
                             Tag="Siri"  ToolTip="Siri"      Click="OnHidClicked" />

@@ -456,31 +456,50 @@ public sealed partial class MainWindow : WindowEx
     private async void OnPowerClicked(object sender, RoutedEventArgs e)
         => await DispatchAsync(HidCommand.Wake);
 
-    // Home: separate down/up so the TV sees actual hold duration. A short
-    // tap goes home; holding ~0.7 s+ triggers the tvOS app-switcher.
-    private async void OnHomeDown(object sender, PointerRoutedEventArgs e)
+    // Home: tap → home screen, hold → tvOS app-switcher. A DispatcherQueueTimer
+    // started on press fires at the threshold; if it fires while still held,
+    // that's a long-press → app-switcher (fixed 1 s programmatic HID hold,
+    // matching the Swift port). Release before the timer = a tap.
+    private static readonly TimeSpan HomeLongPressThreshold = TimeSpan.FromMilliseconds(500);
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _homeHoldTimer;
+    private bool _homeLongFired;
+
+    private void OnHomeDown(object sender, PointerRoutedEventArgs e)
     {
-        try
+        _homeLongFired = false;
+        _homeHoldTimer?.Stop();
+        _homeHoldTimer = DispatcherQueue.CreateTimer();
+        _homeHoldTimer.Interval = HomeLongPressThreshold;
+        _homeHoldTimer.IsRepeating = false;
+        _homeHoldTimer.Tick += async (_, _) =>
         {
-            var session = await EnsureSessionAsync();
-            if (session is null) return;
-            await session.SendHidAsync(HidCommand.Home, down: true);
-        }
-        catch (Exception ex)
-        {
-            await ShowMessageAsync($"Home failed: {ex.Message}");
-            await TeardownActiveAsync();
-        }
+            _homeLongFired = true;
+            try
+            {
+                var session = await EnsureSessionAsync();
+                if (session is null) return;
+                await session.LongPressAsync(HidCommand.Home, 1000);
+            }
+            catch (Exception ex)
+            {
+                await ShowMessageAsync($"App switcher failed: {ex.Message}");
+                await TeardownActiveAsync();
+            }
+        };
+        _homeHoldTimer.Start();
     }
 
     private async void OnHomeUp(object sender, PointerRoutedEventArgs e)
     {
-        try
-        {
-            if (_session is null) return;
-            await _session.SendHidAsync(HidCommand.Home, down: false);
-        }
-        catch { /* swallow release errors */ }
+        _homeHoldTimer?.Stop();
+        if (_homeLongFired) { _homeLongFired = false; return; }  // long-press already handled
+        await DispatchAsync(HidCommand.Home);                    // short tap → go home
+    }
+
+    private void OnHomeLeave(object sender, PointerRoutedEventArgs e)
+    {
+        _homeHoldTimer?.Stop();
+        _homeLongFired = false;
     }
 
     private void OnCloseClicked(object sender, RoutedEventArgs e) => this.Hide();

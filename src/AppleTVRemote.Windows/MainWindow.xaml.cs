@@ -415,34 +415,52 @@ public partial class MainWindow : Window
     private async void OnPowerClicked(object sender, RoutedEventArgs e)
         => await DispatchAsync(HidCommand.Wake);
 
-    // Home: send HID down on press, up on release — that way the TV sees the
-    // user's actual hold duration. A short tap goes to the home screen; a
-    // hold of ~0.7 s+ pops the tvOS app-switcher. PressAsync would send down
-    // + up back-to-back and we'd lose the hold-to-app-switcher gesture.
-    private async void OnHomeDown(object sender, MouseButtonEventArgs e)
+    // Home: tap → home screen, hold → tvOS app-switcher. A DispatcherTimer
+    // started on mouse-down fires at the threshold; if it fires while still
+    // held, that's a long-press → app-switcher (a fixed 1 s programmatic HID
+    // hold, matching the Swift port). Releasing before the timer = a tap.
+    private static readonly TimeSpan HomeLongPressThreshold = TimeSpan.FromMilliseconds(500);
+    private System.Windows.Threading.DispatcherTimer? _homeHoldTimer;
+    private bool _homeLongFired;
+
+    private void OnHomeDown(object sender, MouseButtonEventArgs e)
     {
-        try
+        _homeLongFired = false;
+        _homeHoldTimer?.Stop();
+        _homeHoldTimer = new System.Windows.Threading.DispatcherTimer { Interval = HomeLongPressThreshold };
+        _homeHoldTimer.Tick += async (_, _) =>
         {
-            var session = await EnsureSessionAsync();
-            if (session is null) return;
-            await session.SendHidAsync(HidCommand.Home, down: true);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Home failed: {ex.Message}", "Apple TV Remote",
-                MessageBoxButton.OK, MessageBoxImage.Error);
-            await TeardownActiveAsync();
-        }
+            _homeHoldTimer?.Stop();
+            _homeLongFired = true;
+            try
+            {
+                var session = await EnsureSessionAsync();
+                if (session is null) return;
+                await session.LongPressAsync(HidCommand.Home, 1000);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"App switcher failed: {ex.Message}", "Apple TV Remote",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                await TeardownActiveAsync();
+            }
+        };
+        _homeHoldTimer.Start();
     }
 
     private async void OnHomeUp(object sender, MouseButtonEventArgs e)
     {
-        try
-        {
-            if (_session is null) return;   // down failed already; nothing to release
-            await _session.SendHidAsync(HidCommand.Home, down: false);
-        }
-        catch { /* swallow release errors; the next button press will rebuild */ }
+        _homeHoldTimer?.Stop();
+        if (_homeLongFired) { _homeLongFired = false; return; }  // long-press already handled
+        await DispatchAsync(HidCommand.Home);                    // short tap → go home
+    }
+
+    private void OnHomeLeave(object sender, MouseEventArgs e)
+    {
+        // Mouse left the button before release — cancel the pending long-press
+        // so dragging off doesn't accidentally trigger the app-switcher.
+        _homeHoldTimer?.Stop();
+        _homeLongFired = false;
     }
 
     private async void OnVolumeClicked(object sender, MouseButtonEventArgs e)
