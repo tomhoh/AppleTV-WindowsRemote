@@ -24,7 +24,7 @@ public static class MrpMessages
     {
         var inner = new ProtobufWriter();
         inner.WriteStringField(1, uniqueIdentifier);
-        inner.WriteStringField(2, "Mac Remote");
+        inner.WriteStringField(2, "Win-AppleTV Remote");
         inner.WriteStringField(3, "iPhone");                 // localizedModelName
         inner.WriteStringField(4, "18G82");                  // systemBuildVersion
         inner.WriteStringField(5, "com.apple.TVRemote");     // applicationBundleIdentifier

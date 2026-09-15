@@ -32,10 +32,34 @@ public sealed partial class PairingWindow : WindowEx
 
     public StoredCredentials? PairedCredentials { get; private set; }
 
+    /// <summary>
+    /// Snapshot of the controller-name field, updated on the UI thread
+    /// whenever <see cref="ClientNameBox"/> changes. Read from the
+    /// background pair-setup task without a dispatcher hop.
+    /// </summary>
+    private string _clientNameSnapshot = TruncateForATV(Environment.MachineName);
+
+    private string ResolveControllerName()
+    {
+        var raw = _clientNameSnapshot?.Trim() ?? string.Empty;
+        return TruncateForATV(string.IsNullOrEmpty(raw) ? Environment.MachineName : raw);
+    }
+
+    private static string TruncateForATV(string s) =>
+        s.Length <= 30 ? s : s.Substring(0, 30);
+
     public PairingWindow()
     {
         InitializeComponent();
         DeviceList.ItemsSource = _devices;
+        // Prefill the "show this PC on the Apple TV as" field with the
+        // machine name, capped at 30 chars (matches ATV Settings row
+        // truncation). The user can edit before submitting the PIN.
+        ClientNameBox.Text = _clientNameSnapshot;
+        // Keep _clientNameSnapshot in step with the textbox so the pair-
+        // setup task can read the current value without marshalling.
+        ClientNameBox.TextChanged += (_, _) =>
+            _clientNameSnapshot = ClientNameBox.Text ?? string.Empty;
 
         // Center on the primary monitor work area.
         this.CenterOnScreen();
@@ -336,18 +360,23 @@ public sealed partial class PairingWindow : WindowEx
                 },
                 clientPairingId: pairingId,
                 clientSeed: null,
-                displayName: dev.Name,
+                displayName: null,
                 onProgress: AppendLog,
-                cancel: ct);
+                cancel: ct,
+                // Late-bound so edits to ClientNameBox up until the user
+                // clicks Pair land in the M5 name TLV. Reads a UI-thread-
+                // synced snapshot field — no dispatcher hop needed here.
+                displayNameProvider: ResolveControllerName);
 
             var deviceId = Convert.ToHexString(creds.AtvIdentifier).ToLowerInvariant();
             PairedCredentials = new StoredCredentials(
-                DeviceId:    deviceId,
-                DisplayName: dev.Name,
-                Credentials: creds,
-                PairedAtUtc: DateTime.UtcNow,
-                Host:        dev.Address.ToString(),
-                Port:        dev.Port);
+                DeviceId:       deviceId,
+                DisplayName:    dev.Name,
+                Credentials:    creds,
+                PairedAtUtc:    DateTime.UtcNow,
+                Host:           dev.Address.ToString(),
+                Port:           dev.Port,
+                ControllerName: ResolveControllerName());
             new CredentialStore().Save(PairedCredentials);
 
             dq?.TryEnqueue(() => this.Close());

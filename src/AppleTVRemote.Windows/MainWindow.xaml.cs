@@ -197,6 +197,18 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Device id of the currently-live session, or null if idle.</summary>
+    public string? ActiveDeviceId => _activeDevice?.DeviceId;
+
+    /// <summary>
+    /// Tear down any active session and open a new one against whatever
+    /// <see cref="DeviceCombo"/> currently has selected. Called from the
+    /// tray quick-switch menu so picking a paired device reconnects
+    /// silently in the background — no need for the user to click a
+    /// remote button just to trigger the switch.
+    /// </summary>
+    public Task ConnectSelectedAsync() => EnsureSessionAsync();
+
     private void RefreshDevices()
     {
         DeviceCombo.ItemsSource = null;
@@ -562,9 +574,15 @@ public partial class MainWindow : Window
             // ~35 s after the missing _touchStart — exactly the symptom in
             // the user-supplied wire log after v0.1.26.
             var clientIdString = System.Text.Encoding.ASCII.GetString(selected.Credentials.ClientIdentifier);
-            // Match Swift sibling's _systemInfo: it sends "Mac Remote" as the
-            // device name. Pair-setup M5 also hardcodes the same name in v0.1.35.
-            await _session.SendSessionInitAsync(clientIdString, "Mac Remote");
+            // Send whatever controller name was registered with the ATV
+            // during pair-setup M5 (StoredCredentials.ControllerName).
+            // Older credentials paired before that field existed have it
+            // empty; fall back to the machine name so the picker still
+            // shows something identifiable.
+            var controllerName = string.IsNullOrEmpty(selected.ControllerName)
+                ? Environment.MachineName
+                : selected.ControllerName;
+            await _session.SendSessionInitAsync(clientIdString, controllerName);
             return _session;
         }
         catch (Exception ex)

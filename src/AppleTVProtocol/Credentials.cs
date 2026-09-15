@@ -51,7 +51,13 @@ public sealed record StoredCredentials(
     HapCredentials Credentials,
     DateTime PairedAtUtc,
     string Host = "",
-    int Port = 0);
+    int Port = 0,
+    // Name registered on the Apple TV during pair-setup M5 (tag 0x11) and
+    // echoed back in _systemInfo._c.name on every reconnect. Distinct from
+    // `DisplayName`, which is the ATV's own friendly name for the picker.
+    // Empty on credentials written by pre-name-field versions — MainWindow
+    // falls back to Environment.MachineName in that case.
+    string ControllerName = "");
 
 /// <summary>
 /// JSON-backed credential store. Defaults to
@@ -187,7 +193,8 @@ public sealed class CredentialStore
             Convert.ToHexString(creds.Credentials.ClientIdentifier).ToLowerInvariant(),
             creds.PairedAtUtc.ToString("O"),
             creds.Host,
-            creds.Port);
+            creds.Port,
+            creds.ControllerName);
         return JsonSerializer.SerializeToUtf8Bytes(dto, _jsonOpts);
     }
 
@@ -205,7 +212,8 @@ public sealed class CredentialStore
                 Convert.FromHexString(dto.ClientIdentifier)),
             DateTime.Parse(dto.PairedAtUtc, null, System.Globalization.DateTimeStyles.RoundtripKind),
             dto.Host ?? string.Empty,
-            dto.Port);
+            dto.Port,
+            dto.ControllerName ?? string.Empty);
     }
 
     internal sealed record CredentialDto(
@@ -217,5 +225,6 @@ public sealed class CredentialStore
         string ClientIdentifier,
         string PairedAtUtc,
         string? Host = null,
-        int    Port  = 0);
+        int    Port  = 0,
+        string? ControllerName = null);
 }

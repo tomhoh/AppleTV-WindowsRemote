@@ -126,6 +126,15 @@
                      TextAlignment="Center"
                      PlaceholderText="1234"
                      InputScope="Number" />
+            <TextBlock Margin="0,4,0,0"
+                       FontSize="11"
+                       TextAlignment="Center"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Show this PC on the Apple TV as" />
+            <TextBox x:Name="ClientNameBox"
+                     Width="260"
+                     MaxLength="30"
+                     FontSize="13" />
             <TextBlock x:Name="PinError"
                        Foreground="#E04040"
                        Visibility="Collapsed"

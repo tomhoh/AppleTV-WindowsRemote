@@ -164,7 +164,15 @@ public sealed class CompanionPairSetup
     /// 32-byte Ed25519 seed. Generated fresh if null.
     /// </param>
     /// <param name="displayName">
-    /// Optional friendly name to send as `Name` in the M5 inner TLV.
+    /// Optional friendly name to send as `Name` in the M5 inner TLV. If
+    /// <paramref name="displayNameProvider"/> is also supplied it wins;
+    /// use that when the UI lets the user edit the name up to the moment
+    /// they click Pair, so M5 registers whatever they finally chose.
+    /// </param>
+    /// <param name="displayNameProvider">
+    /// Optional late-binding replacement for <paramref name="displayName"/>.
+    /// Invoked once, right before M5 is built (after M4 arrives). Return a
+    /// non-null string; return empty to fall back to the default.
     /// </param>
     /// <summary>
     /// Run pair-setup with a PIN collected from the user AFTER M1
@@ -188,7 +196,8 @@ public sealed class CompanionPairSetup
         byte[]? clientSeed = null,
         string? displayName = null,
         Action<string>? onProgress = null,
-        CancellationToken cancel = default)
+        CancellationToken cancel = default,
+        Func<string>? displayNameProvider = null)
     {
         void Log(string msg) { try { onProgress?.Invoke(msg); } catch { } }
         // ── set up state ──
@@ -292,15 +301,19 @@ public sealed class CompanionPairSetup
             //
             // Fall back to a sensible default (machine name) so we never
             // emit a frame without it.
-            // Match the Swift sibling exactly: it hardcodes "Mac Remote" as
-            // the controller display name regardless of the actual host. The
-            // user reports the Swift app's app-launcher works on this TV but
-            // ours doesn't even after every wire-format fix; the controller
-            // record's display name is the last meaningful difference left.
-            // Worth testing — costs nothing but a re-pair.
-            var nameForController = string.IsNullOrEmpty(displayName)
-                ? "Mac Remote"
-                : displayName;
+            // Prefer the late-bound provider so UI-driven pair-setup can
+            // capture edits the user makes up until they click Pair. Fall
+            // back to the eager `displayName` param, then to a defensive
+            // literal so we never emit an M5 without the Name TLV.
+            string? lateName = null;
+            if (displayNameProvider is not null)
+            {
+                try { lateName = displayNameProvider(); } catch { lateName = null; }
+            }
+            var nameForController =
+                !string.IsNullOrEmpty(lateName)    ? lateName    :
+                !string.IsNullOrEmpty(displayName) ? displayName :
+                "Win-AppleTV Remote";
 
             var innerTlvEntries = new Dictionary<byte, byte[]>
             {
