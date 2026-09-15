@@ -292,11 +292,12 @@ public sealed class CompanionPairSetup
             //
             // Fall back to a sensible default (machine name) so we never
             // emit a frame without it.
-            // Match the Swift sibling: it hardcodes the controller display name
-            // regardless of the actual host, so both ports show up under the
-            // same label in the ATV's Settings → Remotes & Devices list.
+            // Hardcode the controller display name so this port shows up as
+            // "Win-AppleTV Remote" in the ATV's Settings → Remotes & Devices
+            // list, distinguishing it from the Swift sibling's "Mac-AppleTV
+            // Remote".
             var nameForController = string.IsNullOrEmpty(displayName)
-                ? "Mac-AppleTV Remote"
+                ? "Win-AppleTV Remote"
                 : displayName;
 
             var innerTlvEntries = new Dictionary<byte, byte[]>
