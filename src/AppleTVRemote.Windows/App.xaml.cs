@@ -72,13 +72,18 @@ public partial class App : Application
 
         if (paired.Length > 0)
         {
+            var activeId = _popup?.ActiveDeviceId;
             foreach (var dev in paired)
             {
+                var isActive = activeId is not null && dev.DeviceId == activeId;
+                var baseName = string.IsNullOrWhiteSpace(dev.DisplayName) ? "Apple TV" : dev.DisplayName;
                 var item = new MenuItem
                 {
-                    Header           = string.IsNullOrWhiteSpace(dev.DisplayName) ? "Apple TV" : dev.DisplayName,
+                    Header           = isActive ? baseName + "  •  connected" : baseName,
                     InputGestureText = string.IsNullOrWhiteSpace(dev.Host) ? "" : dev.Host,
                     Tag              = dev,
+                    IsChecked        = isActive,
+                    IsEnabled        = !isActive,
                 };
                 item.Click += OnDeviceQuickSwitchClicked;
                 menu.Items.Add(item);
@@ -104,12 +109,17 @@ public partial class App : Application
     private void OnDeviceQuickSwitchClicked(object sender, RoutedEventArgs e)
     {
         if (sender is not MenuItem mi || mi.Tag is not StoredCredentials dev) return;
-        // Tell the popup which device to surface, then show it.
+        // Surface the popup pointing at the chosen device and immediately
+        // fire the pair-verify + session-init handshake so the user
+        // doesn't have to press a remote button just to switch devices.
+        // Fire-and-forget: MainWindow.EnsureSessionAsync surfaces its own
+        // error dialogs.
         EnsurePopup();
         _popup!.SelectStoredDevice(dev.DeviceId);
         _popup.PositionNearTray();
         _popup.Show();
         _popup.Activate();
+        _ = _popup.ConnectSelectedAsync();
     }
 
     private void OnToggleStartupClicked(object sender, RoutedEventArgs e)

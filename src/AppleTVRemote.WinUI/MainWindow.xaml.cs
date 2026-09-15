@@ -155,6 +155,18 @@ public sealed partial class MainWindow : WindowEx
         }
     }
 
+    /// <summary>Device id of the currently-live session, or null if idle.</summary>
+    public string? ActiveDeviceId => _activeDevice?.DeviceId;
+
+    /// <summary>
+    /// Tear down any active session and open a new one against whatever
+    /// <see cref="DeviceCombo"/> currently has selected. Called from the
+    /// tray quick-switch menu so picking a paired device reconnects
+    /// silently in the background — no need for the user to click a
+    /// remote button just to trigger the switch.
+    /// </summary>
+    public Task ConnectSelectedAsync() => EnsureSessionAsync();
+
     // ─── Theme adaptation ──────────────────────────────────────────
 
     private void ApplyTheme()

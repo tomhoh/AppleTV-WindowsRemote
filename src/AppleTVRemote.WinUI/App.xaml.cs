@@ -85,11 +85,14 @@ public partial class App : Application
 
         if (paired.Length > 0)
         {
+            var activeId = _popup?.ActiveDeviceId;
             foreach (var dev in paired)
             {
+                var isActive = activeId is not null && dev.DeviceId == activeId;
                 var label = string.IsNullOrWhiteSpace(dev.DisplayName) ? "Apple TV" : dev.DisplayName;
                 if (!string.IsNullOrWhiteSpace(dev.Host)) label += $"  ({dev.Host})";
-                var item = new MenuFlyoutItem { Text = label };
+                if (isActive) label += "  •  connected";
+                var item = new MenuFlyoutItem { Text = label, IsEnabled = !isActive };
                 var devId = dev.DeviceId;
                 item.Command = new RelayCommand(_ => SwitchToDevice(devId));
                 flyout.Items.Add(item);
@@ -131,6 +134,10 @@ public partial class App : Application
         _popup.SelectStoredDevice(deviceId);
         _popup.PositionNearTray();
         _popup.Activate();
+        // Fire pair-verify + session-init immediately so the user doesn't
+        // need to press a remote button before the switch takes effect.
+        // MainWindow.EnsureSessionAsync surfaces its own error dialogs.
+        _ = _popup.ConnectSelectedAsync();
     }
 
     private void TogglePopup()
