@@ -33,10 +33,29 @@ public partial class PairingWindow : Window
 
     public StoredCredentials? PairedCredentials { get; private set; }
 
+    /// <summary>
+    /// Value from the "show this PC on the Apple TV as" field, trimmed and
+    /// truncated. Falls back to <see cref="Environment.MachineName"/> if the
+    /// user cleared it. Called on the UI thread via <see cref="Dispatcher"/>
+    /// so it stays consistent with what the user sees.
+    /// </summary>
+    private string ResolveControllerName()
+    {
+        string raw = Dispatcher.Invoke(() => ClientNameBox.Text?.Trim() ?? string.Empty);
+        return TruncateForATV(string.IsNullOrEmpty(raw) ? Environment.MachineName : raw);
+    }
+
+    private static string TruncateForATV(string s) =>
+        s.Length <= 30 ? s : s.Substring(0, 30);
+
     public PairingWindow()
     {
         InitializeComponent();
         DeviceList.ItemsSource = _devices;
+        // Prefill the "show this PC on the Apple TV as" field with the
+        // machine name, capped at 30 chars (matches the ATV Settings row
+        // truncation). The user can edit it before submitting the PIN.
+        ClientNameBox.Text = TruncateForATV(Environment.MachineName);
         // Apply theme before the visual tree paints to avoid a flash of
         // the light defaults on a dark-mode system.
         ApplyTheme();
@@ -330,19 +349,25 @@ public partial class PairingWindow : Window
                 },
                 clientPairingId: pairingId,
                 clientSeed: null,
-                displayName: dev.Name,
+                displayName: null,
                 onProgress: AppendLog,
-                cancel: ct);
+                cancel: ct,
+                // Late-bound so edits to ClientNameBox up until the user
+                // clicks Pair land in the M5 name TLV. Reads on the UI
+                // thread via Dispatcher.Invoke; safe because RunAsync is
+                // fire-and-forget from a UI-thread event handler.
+                displayNameProvider: ResolveControllerName);
 
             // Success — save credentials and close the dialog.
             var deviceId = Convert.ToHexString(creds.AtvIdentifier).ToLowerInvariant();
             PairedCredentials = new StoredCredentials(
-                DeviceId:    deviceId,
-                DisplayName: dev.Name,
-                Credentials: creds,
-                PairedAtUtc: DateTime.UtcNow,
-                Host:        dev.Address.ToString(),
-                Port:        dev.Port);
+                DeviceId:       deviceId,
+                DisplayName:    dev.Name,
+                Credentials:    creds,
+                PairedAtUtc:    DateTime.UtcNow,
+                Host:           dev.Address.ToString(),
+                Port:           dev.Port,
+                ControllerName: ResolveControllerName());
             new CredentialStore().Save(PairedCredentials);
 
             Dispatcher.Invoke(() =>

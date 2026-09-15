@@ -98,6 +98,15 @@
                          Padding="8"
                          MaxLength="6"
                          HorizontalContentAlignment="Center" />
+            <TextBlock Margin="0,16,0,0"
+                       FontSize="11"
+                       Foreground="#666666"
+                       Text="Show this PC on the Apple TV as:" />
+            <TextBox   x:Name="ClientNameBox"
+                       Margin="0,4,0,0"
+                       FontSize="13"
+                       Padding="6"
+                       MaxLength="30" />
             <TextBlock x:Name="PinError"
                        Margin="0,8,0,0"
                        Foreground="#CC0000"

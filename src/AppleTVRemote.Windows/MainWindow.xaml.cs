@@ -562,10 +562,15 @@ public partial class MainWindow : Window
             // ~35 s after the missing _touchStart — exactly the symptom in
             // the user-supplied wire log after v0.1.26.
             var clientIdString = System.Text.Encoding.ASCII.GetString(selected.Credentials.ClientIdentifier);
-            // Identify this port to the ATV as "Win-AppleTV Remote" — distinct
-            // from the Swift sibling's "Mac-AppleTV Remote". Pair-setup M5
-            // hardcodes the same name.
-            await _session.SendSessionInitAsync(clientIdString, "Win-AppleTV Remote");
+            // Send whatever controller name was registered with the ATV
+            // during pair-setup M5 (StoredCredentials.ControllerName).
+            // Older credentials paired before that field existed have it
+            // empty; fall back to the machine name so the picker still
+            // shows something identifiable.
+            var controllerName = string.IsNullOrEmpty(selected.ControllerName)
+                ? Environment.MachineName
+                : selected.ControllerName;
+            await _session.SendSessionInitAsync(clientIdString, controllerName);
             return _session;
         }
         catch (Exception ex)
