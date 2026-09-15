@@ -562,9 +562,9 @@ public partial class MainWindow : Window
             // ~35 s after the missing _touchStart — exactly the symptom in
             // the user-supplied wire log after v0.1.26.
             var clientIdString = System.Text.Encoding.ASCII.GetString(selected.Credentials.ClientIdentifier);
-            // Match Swift sibling's _systemInfo: it sends "Mac Remote" as the
-            // device name. Pair-setup M5 also hardcodes the same name in v0.1.35.
-            await _session.SendSessionInitAsync(clientIdString, "Mac Remote");
+            // Match Swift sibling's _systemInfo: it sends "Mac-AppleTV Remote" as
+            // the device name. Pair-setup M5 also hardcodes the same name.
+            await _session.SendSessionInitAsync(clientIdString, "Mac-AppleTV Remote");
             return _session;
         }
         catch (Exception ex)
