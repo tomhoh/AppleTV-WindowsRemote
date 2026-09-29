@@ -51,6 +51,28 @@ public sealed class BinaryPlistWriter
 
     public ObjRef AddBool(bool value) => Append(new RawObj(new byte[] { value ? (byte)0x09 : (byte)0x08 }));
 
+    /// <summary>Append the "$null" sentinel string used in NSKeyedArchiver archives.</summary>
+    public ObjRef AddNull() => AddString("$null");
+
+    /// <summary>
+    /// Encode a UID reference — the binary plist <c>0x8N</c> type that
+    /// NSKeyedArchiver / RTIKeyedArchiver uses for object cross-references.
+    /// Required by <see cref="RTITextOperations"/> for _tiC payloads.
+    /// </summary>
+    public ObjRef AddUid(uint value)
+    {
+        byte[] bytes;
+        if (value <= 0xFF)
+            bytes = new byte[] { 0x80, (byte)value };
+        else if (value <= 0xFFFF)
+            bytes = new byte[] { 0x81, (byte)(value >> 8), (byte)(value & 0xFF) };
+        else
+            bytes = new byte[] { 0x83,
+                (byte)(value >> 24), (byte)((value >> 16) & 0xFF),
+                (byte)((value >>  8) & 0xFF), (byte)(value & 0xFF) };
+        return Append(new RawObj(bytes));
+    }
+
     public ObjRef AddString(string s)
     {
         bool ascii = s.All(c => c < 128);
@@ -157,9 +179,18 @@ public sealed class BinaryPlistWriter
 }
 
 /// <summary>
+/// Opaque UID reference inside an NSKeyedArchiver / RTIKeyedArchiver
+/// document. `<see cref="Index"/>` is the position in the archive's
+/// <c>$objects</c> array. Distinct from a plain <see cref="long"/> so
+/// walkers can tell references from actual integers.
+/// </summary>
+public readonly record struct PlistUid(uint Index);
+
+/// <summary>
 /// Reader for inbound bplist00 documents. Returns nested dictionaries as
 /// <c>Dictionary&lt;string, object?&gt;</c>; values may be string, long,
-/// double, bool, byte[], object?[] (array), or nested dict.
+/// double, bool, byte[], object?[] (array), nested dict, or
+/// <see cref="PlistUid"/> for archiver cross-references.
 /// </summary>
 public static class BinaryPlistReader
 {
@@ -239,6 +270,13 @@ public static class BinaryPlistReader
                     arr[i] = ParseObject(data, offsets, refSize, refIdx);
                 }
                 return arr;
+            }
+            case 0x80: // UID reference (NSKeyedArchiver cross-ref)
+            {
+                int byteCount = lo + 1;
+                uint v = 0;
+                for (int i = 0; i < byteCount; i++) v = (v << 8) | data[p + 1 + i];
+                return new PlistUid(v);
             }
             case 0xD0: // dict
             {

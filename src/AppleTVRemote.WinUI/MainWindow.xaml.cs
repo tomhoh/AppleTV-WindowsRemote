@@ -33,6 +33,7 @@ public sealed partial class MainWindow : WindowEx
     private CompanionConnection? _conn;
     private CompanionSession?    _session;
     private StoredCredentials?   _activeDevice;
+    private TextInputWindowManager? _textInput;
 
     private const double ClickpadDiameter      = 130;
     private const double ClickpadInnerDiameter = 72;
@@ -606,9 +607,13 @@ public sealed partial class MainWindow : WindowEx
             // rebuilds it instead of timing out against a dead connection.
             conn.Closed += (_, _) =>
             {
-                _session = null;
-                _conn = null;
+                var ti = _textInput;
+                _textInput = null;
+                _session   = null;
+                _conn      = null;
                 _activeDevice = null;
+                if (ti is not null)
+                    DispatcherQueue?.TryEnqueue(() => { try { ti.Dispose(); } catch { } });
             };
             await conn.ConnectAsync();
             await new CompanionPairVerify(conn).RunAsync(selected.Credentials);
@@ -616,6 +621,10 @@ public sealed partial class MainWindow : WindowEx
             _session       = new CompanionSession(conn);
             _session.NowPlayingUpdated += OnNowPlayingUpdated;
             _activeDevice  = selected;
+            _textInput     = new TextInputWindowManager(
+                _session,
+                resolvePopup: () => this,
+                dismissPopup: () => DispatcherQueue?.TryEnqueue(this.Hide));
 
             // Run the Companion session-init handshake.
             // The v0.1.20–22 failures were the pair-verify M4 race (fixed in
@@ -645,6 +654,8 @@ public sealed partial class MainWindow : WindowEx
 
     private async Task TeardownActiveAsync()
     {
+        if (_textInput is { } ti) { try { ti.Dispose(); } catch { } }
+        _textInput = null;
         if (_session is { } s)
         {
             try { s.NowPlayingUpdated -= OnNowPlayingUpdated; } catch { }
