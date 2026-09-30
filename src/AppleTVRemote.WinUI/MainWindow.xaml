@@ -98,14 +98,16 @@
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <!-- ── Column 0: app launcher (slides out left) ── -->
+        <!-- ── Column 0: app launcher (slides out left) ──
+             No RenderTransform: the slide-in/out is driven by a
+             Composition animation on the visual's `Translation`
+             property (see AnimateSlide in code-behind), which runs on
+             the compositor thread. A DoubleAnimation on a
+             TranslateTransform.X had to be a dependent animation and
+             was UI-thread-bound, which is what made the slide jerky. -->
         <Grid x:Name="LauncherPanel"
               Grid.Column="0"
-              Visibility="Collapsed"
-              RenderTransformOrigin="0,0">
-            <Grid.RenderTransform>
-                <TranslateTransform x:Name="LauncherSlide" X="0" />
-            </Grid.RenderTransform>
+              Visibility="Collapsed">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -189,16 +191,36 @@
              10pt gutter on each side. The old close-X + pair-button
              UI moved off the popup — dismissal is click-outside and
              pairing lives in the tray context menu. -->
-        <ComboBox x:Name="DeviceCombo"
-                  HorizontalAlignment="Stretch"
-                  VerticalAlignment="Top"
-                  Margin="8,8,8,0"
-                  Visibility="Collapsed" />
+        <!-- Pill-shaped device picker. Button + MenuFlyout replaces
+             ComboBox so there's no built-in DropDown chevron and no
+             DropDownOverlay column stealing space on the right — the
+             whole 26pt pill is available for the device name. Clicking
+             the button opens a MenuFlyout with one item per paired
+             device; RefreshDevices() populates it. -->
+        <Button x:Name="DeviceButton"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Top"
+                Margin="8,8,8,0"
+                Height="26"
+                MinHeight="26"
+                FontSize="12"
+                CornerRadius="13"
+                Padding="10,0,10,0"
+                HorizontalContentAlignment="Left"
+                VerticalContentAlignment="Center"
+                Content="Select Apple TV…"
+                Visibility="Collapsed">
+            <Button.Flyout>
+                <MenuFlyout x:Name="DeviceFlyout" Placement="Bottom" />
+            </Button.Flyout>
+        </Button>
 
         <!-- Row under the dropdown: apps toggle on the left, power
              on the right. Power moved from the header row per user
              feedback ("below the selection dropdown on the right"). -->
-        <Grid Margin="8,52,8,0" VerticalAlignment="Top">
+        <!-- Apps/Power row Y offset shifted up 6pt to track the
+             taller-to-shorter ComboBox change (32pt → 26pt height). -->
+        <Grid Margin="8,46,8,0" VerticalAlignment="Top">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -220,7 +242,7 @@
                     Click="OnPowerClicked" />
         </Grid>
 
-        <StackPanel Margin="0,76,0,0" HorizontalAlignment="Center" Spacing="8">
+        <StackPanel Margin="0,70,0,0" HorizontalAlignment="Center" Spacing="8">
 
             <Grid x:Name="Clickpad"
                   Width="130" Height="130"
