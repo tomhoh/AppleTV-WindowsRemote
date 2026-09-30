@@ -185,7 +185,13 @@
         </Grid>
 
         <!-- ── Column 1: remote ── -->
-        <Grid Grid.Column="1">
+        <!-- x:Name'd + opaque Background so the launcher sliding in
+             from behind (with translation X=+panelWidth) is fully
+             obscured by this column while it's under the remote.
+             Without an opaque background the launcher shows through
+             the remote as it slides. Painted by PaintBrushConsumers
+             so it tracks the popup Root.Background on theme changes. -->
+        <Grid x:Name="RemoteColumn" Grid.Column="1">
 
         <!-- Full-width device dropdown at the top of the popup, with
              10pt gutter on each side. The old close-X + pair-button
@@ -208,41 +214,69 @@
                 Padding="10,0,10,0"
                 HorizontalContentAlignment="Center"
                 VerticalContentAlignment="Center"
+                Background="Transparent"
+                BorderBrush="Transparent"
                 Content="Select Apple TV…"
                 Visibility="Collapsed">
-            <!-- ThemeDictionaries with hardcoded colors — the previous
-                 `<StaticResource ResourceKey="SubtleFillColor…">` alias
-                 approach wasn't consistently resolving on Windows and
-                 left the button showing chrome by default. Default is
-                 fully transparent (Root.Background bleeds through);
-                 hover uses the SAME subtle tint as ClickpadHover so
-                 the two hover surfaces read as one visual language. -->
+            <!-- ThemeDictionaries + ButtonBackground* overrides didn't
+                 reliably reach the default WinUI 3 Button template on
+                 Windows in v0.4.2 — the button still had chrome at
+                 rest. Definitive fix: full ControlTemplate override
+                 with VisualStateManager setters. Default (Normal
+                 state) is Background="Transparent" from the Button
+                 element; PointerOver/Pressed swap the Grid's Background
+                 to theme-aware brushes defined in the local
+                 ThemeDictionaries below. -->
             <Button.Resources>
                 <ResourceDictionary>
                     <ResourceDictionary.ThemeDictionaries>
                         <ResourceDictionary x:Key="Dark">
-                            <SolidColorBrush x:Key="ButtonBackground"            Color="Transparent" />
-                            <SolidColorBrush x:Key="ButtonBackgroundDisabled"    Color="Transparent" />
-                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#08FFFFFF" />
-                            <SolidColorBrush x:Key="ButtonBackgroundPressed"     Color="#14FFFFFF" />
-                            <SolidColorBrush x:Key="ButtonBorderBrush"           Color="Transparent" />
-                            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
-                            <SolidColorBrush x:Key="ButtonBorderBrushPressed"    Color="Transparent" />
-                            <SolidColorBrush x:Key="ButtonBorderBrushDisabled"   Color="Transparent" />
+                            <SolidColorBrush x:Key="DeviceButtonHoverFill"   Color="#08FFFFFF"/>
+                            <SolidColorBrush x:Key="DeviceButtonPressedFill" Color="#14FFFFFF"/>
                         </ResourceDictionary>
                         <ResourceDictionary x:Key="Light">
-                            <SolidColorBrush x:Key="ButtonBackground"            Color="Transparent" />
-                            <SolidColorBrush x:Key="ButtonBackgroundDisabled"    Color="Transparent" />
-                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#08000000" />
-                            <SolidColorBrush x:Key="ButtonBackgroundPressed"     Color="#14000000" />
-                            <SolidColorBrush x:Key="ButtonBorderBrush"           Color="Transparent" />
-                            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
-                            <SolidColorBrush x:Key="ButtonBorderBrushPressed"    Color="Transparent" />
-                            <SolidColorBrush x:Key="ButtonBorderBrushDisabled"   Color="Transparent" />
+                            <SolidColorBrush x:Key="DeviceButtonHoverFill"   Color="#08000000"/>
+                            <SolidColorBrush x:Key="DeviceButtonPressedFill" Color="#14000000"/>
                         </ResourceDictionary>
                     </ResourceDictionary.ThemeDictionaries>
                 </ResourceDictionary>
             </Button.Resources>
+            <Button.Template>
+                <ControlTemplate TargetType="Button">
+                    <Grid x:Name="ButtonSurface"
+                          Background="{TemplateBinding Background}"
+                          BorderBrush="{TemplateBinding BorderBrush}"
+                          BorderThickness="{TemplateBinding BorderThickness}"
+                          CornerRadius="{TemplateBinding CornerRadius}">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="ButtonSurface.Background"
+                                                Value="{ThemeResource DeviceButtonHoverFill}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="ButtonSurface.Background"
+                                                Value="{ThemeResource DeviceButtonPressedFill}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Disabled" />
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <ContentPresenter
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                            Padding="{TemplateBinding Padding}"
+                            FontSize="{TemplateBinding FontSize}"
+                            Foreground="{TemplateBinding Foreground}" />
+                    </Grid>
+                </ControlTemplate>
+            </Button.Template>
             <Button.Flyout>
                 <MenuFlyout x:Name="DeviceFlyout" Placement="Bottom" />
             </Button.Flyout>

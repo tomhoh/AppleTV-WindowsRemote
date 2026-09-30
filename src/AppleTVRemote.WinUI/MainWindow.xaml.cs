@@ -430,6 +430,12 @@ public sealed partial class MainWindow : WindowEx
         HoverQuadrant.Fill     = hover;
         QuadrantHighlight.Fill = pressed;
 
+        // Remote column background matches the popup surface so the
+        // launcher, when translated one panel-width to the right (behind
+        // the remote for the slide animation), is fully obscured
+        // instead of bleeding through a transparent column.
+        RemoteColumn.Background = Root.Background;
+
         VolumeRocker.Background  = material;
         VolumeRocker.BorderBrush = stroke;
         VolUpGlyph.Foreground    = glyph;
