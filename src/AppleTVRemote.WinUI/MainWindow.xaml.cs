@@ -93,11 +93,14 @@ public sealed partial class MainWindow : WindowEx
     {
         if (AppWindow.Presenter is OverlappedPresenter p)
         {
-            // No system border and no title bar — matches the Mac
-            // popover feel. The old `hasBorder: true` drew a subtle
-            // OS window frame that combined with our own rounded
-            // background to look boxed-in.
-            p.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
+            // Standard WinUI 3 "no title bar, but keep the OS frame"
+            // configuration — hasBorder:true lets Windows draw the
+            // usual rounded corners, focus accent, and drop shadow.
+            // hasBorder:false attempts (v0.3.4-v0.3.6) fought with
+            // DWM: on some builds we got a classic-style thick white
+            // frame with square corners instead of no border at all.
+            // Matches how every other stock WinUI popup looks.
+            p.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
             p.IsMaximizable = false;
             p.IsMinimizable = false;
             p.IsResizable   = false;
@@ -124,22 +127,19 @@ public sealed partial class MainWindow : WindowEx
         try
         {
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            // Keep the modern Win11 rounded corners. On Win11 this is
+            // the default when a window has a border, so setting it
+            // explicitly is belt-and-braces.
             int pref = 2;   // DWMWCP_ROUND
             NativeMethods.DwmSetWindowAttribute(hwnd,
                 NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE,
                 ref pref, sizeof(int));
-            // Belt-and-suspenders: disable DWM's non-client rendering
-            // policy so anything the frame *would* have drawn is skipped
-            // altogether. On Win11 builds where DWMWA_BORDER_COLOR alone
-            // still lets the focus accent tint bleed through, this
-            // suppresses the underlying draw. Value 1 = DWMNCRP_DISABLED.
-            int ncPolicy = 1;
-            NativeMethods.DwmSetWindowAttribute(hwnd,
-                NativeMethods.DWMWA_NCRENDERING_POLICY,
-                ref ncPolicy, sizeof(int));
-            // Initial border colour — ApplyTheme() re-runs this at
-            // theme-change time, and Activated re-runs it after focus
-            // changes in case Win11 stomps the attribute on activation.
+            // NOTE: v0.3.4-v0.3.6 also set DWMWA_NCRENDERING_POLICY
+            // = DWMNCRP_DISABLED and a custom DWMWA_BORDER_COLOR to try
+            // to hide the frame. Both are removed — turning off DWM
+            // non-client rendering was what caused the thick white
+            // classic-style frame with missing corners on some builds.
+            // We now let Windows draw its standard WinUI popup border.
         }
         catch (Exception ex)
         {
@@ -147,50 +147,9 @@ public sealed partial class MainWindow : WindowEx
         }
     }
 
-    /// <summary>
-    /// Sets DWMWA_BORDER_COLOR to a shade slightly darker than the
-    /// popup background so the Win11 window frame reads as a thin
-    /// subtle outline rather than an accent-tinted stripe. Called from
-    /// ApplyLight/DarkBrushes so it tracks the system theme.
-    ///
-    /// COLORREF is `0x00BBGGRR`. Our colours are gray, so byte order
-    /// doesn't matter — 0x000F0F0F == #0F0F0F.
-    /// </summary>
-    private void ApplyBorderColor(bool dark)
-    {
-        try
-        {
-            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-            // Much subtler tint than v0.3.5 — 5 units darker instead of
-            // 16 — so if the DWMNCRP_DISABLED path doesn't fully kill
-            // the frame, what leaks through reads as a barely-
-            // perceptible outline rather than a distinct line.
-            // Dark bg  #1F1F1F → border #1A1A1A
-            // Light bg #F8F8F8 → border #EBEBEB
-            int color = dark ? 0x001A1A1A : 0x00EBEBEB;
-            NativeMethods.DwmSetWindowAttribute(hwnd,
-                NativeMethods.DWMWA_BORDER_COLOR,
-                ref color, sizeof(int));
-            // Re-apply NC rendering-disabled every time the theme runs
-            // (which also fires on Activated) — Windows can reset this
-            // when a window is deactivated and re-focused, and one-shot
-            // application in ApplyBorderlessPresenter wasn't sticking.
-            int ncPolicy = 1;   // DWMNCRP_DISABLED
-            NativeMethods.DwmSetWindowAttribute(hwnd,
-                NativeMethods.DWMWA_NCRENDERING_POLICY,
-                ref ncPolicy, sizeof(int));
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"ApplyBorderColor failed: {ex}");
-        }
-    }
-
     private static class NativeMethods
     {
-        internal const int DWMWA_NCRENDERING_POLICY       = 2;
         internal const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
-        internal const int DWMWA_BORDER_COLOR             = 34;
 
         [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
         internal static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
@@ -283,7 +242,6 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["SelectHoverFill"]   = Solid(0xAA, 0xFF, 0xFF, 0xFF);
         Root.RequestedTheme = ElementTheme.Light;
         PaintBrushConsumers();
-        ApplyBorderColor(dark: false);
     }
 
     private void ApplyDarkBrushes()
@@ -303,7 +261,6 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["SelectHoverFill"]   = Solid(0x80, 0xFF, 0xFF, 0xFF);
         Root.RequestedTheme = ElementTheme.Dark;
         PaintBrushConsumers();
-        ApplyBorderColor(dark: true);
     }
 
     /// <summary>
