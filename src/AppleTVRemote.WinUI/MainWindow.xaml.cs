@@ -53,6 +53,15 @@ public sealed partial class MainWindow : WindowEx
     /// which fires unreliably for topmost windows on Win11.
     /// </summary>
     private LowLevelMouseHook? _outsideClickHook;
+    /// <summary>
+    /// UTC timestamp of the most recent activation. The mouse hook
+    /// ignores clicks that fall within a short grace window after
+    /// this — otherwise the very click that OPENS the popup (on the
+    /// tray icon, which is outside the popup's rect) races through the
+    /// hook and dismisses the popup before it can even take focus.
+    /// </summary>
+    private DateTime _lastActivatedAt = DateTime.MinValue;
+    private const int OutsideClickGraceMs = 300;
 
     public MainWindow()
     {
@@ -73,21 +82,25 @@ public sealed partial class MainWindow : WindowEx
         {
             if (args.WindowActivationState == WindowActivationState.Deactivated)
             {
-                // Belt on top of the mouse-hook suspenders — helps if
-                // focus is stolen via keyboard shortcut or another
-                // window's programmatic Activate.
+                // Uninstall the hook while hidden so it can't fire
+                // spuriously between Show cycles.
+                _outsideClickHook?.Dispose();
+                _outsideClickHook = null;
                 this.Hide();
             }
             else
             {
-                // Re-check theme on each show — handles the case where
-                // the user changed system theme while the popup was hidden.
+                _lastActivatedAt = DateTime.UtcNow;
                 ApplyTheme();
+                ReinforceBorderlessTopmost();
+                // Install the hook only after the popup is actually
+                // active. Combined with the grace window in
+                // OnGlobalMouseDown this prevents the click that OPENED
+                // the popup (typically on the tray icon) from being
+                // seen by the hook and immediately dismissing us.
+                _outsideClickHook ??= new LowLevelMouseHook(OnGlobalMouseDown);
             }
         };
-        // Install the outside-click hook once; the callback checks
-        // IsVisible so a click while the popup is hidden is a no-op.
-        _outsideClickHook = new LowLevelMouseHook(OnGlobalMouseDown);
         Closed += async (_, _) =>
         {
             _outsideClickHook?.Dispose();
@@ -115,6 +128,12 @@ public sealed partial class MainWindow : WindowEx
             try
             {
                 if (!AppWindow.IsVisible) return;
+                // Ignore clicks within the activation grace window —
+                // catches the click that just opened the popup (tray
+                // icon lives outside the popup rect, so the hook would
+                // otherwise fire Hide() on the very click that showed us).
+                if ((DateTime.UtcNow - _lastActivatedAt).TotalMilliseconds < OutsideClickGraceMs)
+                    return;
                 var pos  = AppWindow.Position;
                 var size = AppWindow.Size;
                 bool insideX = screenX >= pos.X && screenX <= pos.X + size.Width;
