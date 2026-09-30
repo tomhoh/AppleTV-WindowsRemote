@@ -8,7 +8,9 @@
     Width="168" Height="380"
     IsMinimizable="False"
     IsMaximizable="False"
-    IsResizable="False">
+    IsResizable="False"
+    IsAlwaysOnTop="True"
+    IsShownInSwitchers="False">
 
     <!--
       Title bar / chrome is removed in code-behind via an OverlappedPresenter

@@ -53,6 +53,15 @@ public sealed partial class MainWindow : WindowEx
     /// which fires unreliably for topmost windows on Win11.
     /// </summary>
     private LowLevelMouseHook? _outsideClickHook;
+    /// <summary>
+    /// UTC timestamp of the most recent activation. The mouse hook
+    /// ignores clicks that fall within a short grace window after
+    /// this — otherwise the very click that OPENS the popup (on the
+    /// tray icon, which is outside the popup's rect) races through the
+    /// hook and dismisses the popup before it can even take focus.
+    /// </summary>
+    private DateTime _lastActivatedAt = DateTime.MinValue;
+    private const int OutsideClickGraceMs = 300;
 
     public MainWindow()
     {
@@ -73,21 +82,25 @@ public sealed partial class MainWindow : WindowEx
         {
             if (args.WindowActivationState == WindowActivationState.Deactivated)
             {
-                // Belt on top of the mouse-hook suspenders — helps if
-                // focus is stolen via keyboard shortcut or another
-                // window's programmatic Activate.
+                // Uninstall the hook while hidden so it can't fire
+                // spuriously between Show cycles.
+                _outsideClickHook?.Dispose();
+                _outsideClickHook = null;
                 this.Hide();
             }
             else
             {
-                // Re-check theme on each show — handles the case where
-                // the user changed system theme while the popup was hidden.
+                _lastActivatedAt = DateTime.UtcNow;
                 ApplyTheme();
+                ReinforceBorderlessTopmost();
+                // Install the hook only after the popup is actually
+                // active. Combined with the grace window in
+                // OnGlobalMouseDown this prevents the click that OPENED
+                // the popup (typically on the tray icon) from being
+                // seen by the hook and immediately dismissing us.
+                _outsideClickHook ??= new LowLevelMouseHook(OnGlobalMouseDown);
             }
         };
-        // Install the outside-click hook once; the callback checks
-        // IsVisible so a click while the popup is hidden is a no-op.
-        _outsideClickHook = new LowLevelMouseHook(OnGlobalMouseDown);
         Closed += async (_, _) =>
         {
             _outsideClickHook?.Dispose();
@@ -115,6 +128,12 @@ public sealed partial class MainWindow : WindowEx
             try
             {
                 if (!AppWindow.IsVisible) return;
+                // Ignore clicks within the activation grace window —
+                // catches the click that just opened the popup (tray
+                // icon lives outside the popup rect, so the hook would
+                // otherwise fire Hide() on the very click that showed us).
+                if ((DateTime.UtcNow - _lastActivatedAt).TotalMilliseconds < OutsideClickGraceMs)
+                    return;
                 var pos  = AppWindow.Position;
                 var size = AppWindow.Size;
                 bool insideX = screenX >= pos.X && screenX <= pos.X + size.Width;
@@ -131,45 +150,55 @@ public sealed partial class MainWindow : WindowEx
 
     public void PositionNearTray() => TrayWindowPositioner.PositionNearCursor(this);
 
-    private void ApplyBorderlessPresenter()
+    /// <summary>
+    /// Re-run WinUI3AppBar's StripFrameStyles pattern and pin the
+    /// window to Z-order top via <c>SetWindowPos(HWND_TOPMOST)</c>.
+    /// Called from Activated on every show cycle because Win11 re-adds
+    /// the frame styles and drops the topmost bit on visibility
+    /// changes. The XAML `IsAlwaysOnTop="True"` on WindowEx handles
+    /// the initial state, but doesn't reliably re-assert after
+    /// Show/Hide cycles.
+    /// </summary>
+    private void ReinforceBorderlessTopmost()
     {
-        // OverlappedPresenter.CreateForContextMenu() is WinUI 3's
-        // canonical borderless popup preset (HasBorder=false,
-        // HasTitleBar=false, IsAlwaysOnTop=true, non-resizable). We
-        // start from it but immediately reinforce with the direct
-        // Win32 strip below — CreateForContextMenu alone left an
-        // OS-drawn frame on some Win11 builds.
-        AppWindow.SetPresenter(OverlappedPresenter.CreateForContextMenu());
-
-        // Menu-bar-style app: hide from the taskbar and from Alt-Tab.
-        // Without this the popup keeps a taskbar entry the whole time
-        // it's open, which competes with the tray icon and confuses
-        // users into thinking it's a regular window.
-        try { AppWindow.IsShownInSwitchers = false; } catch { }
-
-        // Belt-and-braces border removal, straight from the WinUI3AppBar
-        // reference (StripFrameStyles + SWP_FRAMECHANGED). Strips the
-        // window styles that DWM uses to decide whether to composite a
-        // frame at all. WS_CAPTION covers WS_BORDER|WS_DLGFRAME;
-        // WS_THICKFRAME is the sizing edge. Then SWP_FRAMECHANGED forces
-        // the OS to recompute the non-client area with the new styles.
         try
         {
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            // Strip the border-drawing bits again — Win11 sneaks them
+            // back on after certain state transitions (DPI change,
+            // taskbar-autohide toggle, focus changes, etc.).
             long style = NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GWL_STYLE).ToInt64();
             style &= ~((long)(NativeMethods.WS_CAPTION | NativeMethods.WS_THICKFRAME));
             NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GWL_STYLE, (IntPtr)style);
-            NativeMethods.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
-                NativeMethods.SWP_FRAMECHANGED
-                | NativeMethods.SWP_NOMOVE
-                | NativeMethods.SWP_NOSIZE
-                | NativeMethods.SWP_NOZORDER
-                | NativeMethods.SWP_NOACTIVATE);
+            // Force the OS to recompute the non-client rect AND lift
+            // the window to the topmost band. SWP_NOMOVE/NOSIZE keeps
+            // the position PositionNearTray already set; SWP_NOACTIVATE
+            // so we don't cause a spurious deactivation cycle.
+            NativeMethods.SetWindowPos(
+                hwnd, NativeMethods.HWND_TOPMOST,
+                0, 0, 0, 0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE
+                | NativeMethods.SWP_FRAMECHANGED | NativeMethods.SWP_NOACTIVATE);
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"StripFrameStyles failed: {ex}");
+            System.Diagnostics.Debug.WriteLine($"ReinforceBorderlessTopmost: {ex}");
         }
+    }
+
+    private void ApplyBorderlessPresenter()
+    {
+        // Deliberately NOT calling AppWindow.SetPresenter here.
+        // Doing so replaces the WindowEx-managed OverlappedPresenter
+        // with a fresh instance, disconnecting WindowEx's own hooks
+        // (which is how IsAlwaysOnTop / IsShownInSwitchers / IsResizable
+        // etc. — all set in XAML on <winuiex:WindowEx> — actually take
+        // effect). WinUI3AppBar demonstrates this: it configures those
+        // properties in XAML and never touches SetPresenter.
+        //
+        // The frame-strip below is what makes the window borderless.
+        // Style removal + SWP_FRAMECHANGED is enough; no presenter
+        // swap needed.
         // Force DWM to use its largest rounded-corner preference (~8 px).
         // SetWindowRgn was tried for a bigger 22 px radius, but it fought
         // with the system-drawn border and left a white frame behind —
@@ -213,6 +242,9 @@ public sealed partial class MainWindow : WindowEx
         internal const uint SWP_NOZORDER       = 0x0004;
         internal const uint SWP_NOACTIVATE     = 0x0010;
         internal const uint SWP_FRAMECHANGED   = 0x0020;
+        // Special hWndInsertAfter value for SetWindowPos — pins the
+        // window above all non-topmost windows in the Z-order.
+        internal static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 
         [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
         internal static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
