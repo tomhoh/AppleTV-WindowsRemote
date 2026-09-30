@@ -371,7 +371,8 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["ButtonGlyph"]       = Solid(0xE6, 0x00, 0x00, 0x00);
         Root.Resources["ButtonStroke"]      = Solid(0x40, 0x00, 0x00, 0x00);
         Root.Resources["ClickpadRing"]      = Solid(0x26, 0x00, 0x00, 0x00);
-        Root.Resources["ClickpadHover"]     = Solid(0x1E, 0x00, 0x00, 0x00);
+        // Softer hover — was 0x1E (~12% black), now 0x0F (~6% black).
+        Root.Resources["ClickpadHover"]     = Solid(0x0F, 0x00, 0x00, 0x00);
         Root.Resources["ClickpadPressed"]   = Solid(0x33, 0x00, 0x00, 0x00);
         // Light mode keeps the semi-opaque white disc (per user
         // preference) — the disc reads as a soft highlight against
@@ -394,7 +395,8 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["ButtonGlyph"]       = Solid(0xE6, 0xFF, 0xFF, 0xFF);
         Root.Resources["ButtonStroke"]      = Solid(0x33, 0xFF, 0xFF, 0xFF);
         Root.Resources["ClickpadRing"]      = Solid(0x1A, 0xFF, 0xFF, 0xFF);
-        Root.Resources["ClickpadHover"]     = Solid(0x1A, 0xFF, 0xFF, 0xFF);
+        // Softer hover — was 0x1A (~10% white), now 0x0D (~5% white).
+        Root.Resources["ClickpadHover"]     = Solid(0x0D, 0xFF, 0xFF, 0xFF);
         Root.Resources["ClickpadPressed"]   = Solid(0x33, 0xFF, 0xFF, 0xFF);
         // Center-disc: dark like the clickpad ring itself. The 0.5pt
         // ButtonStroke around the ellipse is the "tiny defining border"
@@ -881,7 +883,7 @@ public sealed partial class MainWindow : WindowEx
 
     private const int LauncherPanelWidth = 320;     // 4 tiles wide @ 68 px ItemWidth + scrollbar/margin
     private const int RemoteWidth        = 200;
-    private static readonly TimeSpan LauncherAnimDuration = TimeSpan.FromMilliseconds(220);
+    private static readonly TimeSpan LauncherAnimDuration = TimeSpan.FromMilliseconds(320);
 
     private System.Collections.Generic.IReadOnlyDictionary<string, string>? _cachedApps;
     private string? _launcherFilter;
@@ -977,12 +979,13 @@ public sealed partial class MainWindow : WindowEx
         var visual = ElementCompositionPreview.GetElementVisual(LauncherPanel);
         var compositor = visual.Compositor;
 
-        // Cubic-bezier equivalent of the CSS "ease-out-quart" curve —
-        // gives a natural decelerate that feels smoother than the
-        // built-in CubicEase.EaseOut at the same duration.
+        // Cubic-bezier equivalent of Material Design's "standard easing"
+        // curve — starts moving gently, decelerates smoothly, no snap
+        // at either end. Softer than the previous ease-out-quart at
+        // this longer 320ms duration.
         var easing = compositor.CreateCubicBezierEasingFunction(
-            new System.Numerics.Vector2(0.16f, 1f),
-            new System.Numerics.Vector2(0.3f,  1f));
+            new System.Numerics.Vector2(0.4f, 0f),
+            new System.Numerics.Vector2(0.2f, 1f));
 
         var anim = compositor.CreateVector3KeyFrameAnimation();
         anim.Duration = LauncherAnimDuration;

@@ -5,7 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:winuiex="using:WinUIEx"
     Title="Apple TV Remote"
-    Width="168" Height="380"
+    Width="168" Height="372"
     IsMinimizable="False"
     IsMaximizable="False"
     IsResizable="False"
@@ -200,16 +200,29 @@
         <Button x:Name="DeviceButton"
                 HorizontalAlignment="Stretch"
                 VerticalAlignment="Top"
-                Margin="8,8,8,0"
+                Margin="8,16,8,0"
                 Height="26"
                 MinHeight="26"
                 FontSize="12"
                 CornerRadius="13"
                 Padding="10,0,10,0"
-                HorizontalContentAlignment="Left"
+                HorizontalContentAlignment="Center"
                 VerticalContentAlignment="Center"
                 Content="Select Apple TV…"
                 Visibility="Collapsed">
+            <!-- Background matches the popup surface (transparent —
+                 lets Root.Background show through) so the button reads
+                 as a labeled pill on the remote body rather than a
+                 distinct control chrome. Hover / pressed use the same
+                 subtle Fill brushes the tray-icon pills use. -->
+            <Button.Resources>
+                <SolidColorBrush x:Key="ButtonBackground"            Color="Transparent" />
+                <SolidColorBrush x:Key="ButtonBackgroundDisabled"    Color="Transparent" />
+                <StaticResource  x:Key="ButtonBackgroundPointerOver"
+                                 ResourceKey="SubtleFillColorSecondaryBrush" />
+                <StaticResource  x:Key="ButtonBackgroundPressed"
+                                 ResourceKey="SubtleFillColorTertiaryBrush" />
+            </Button.Resources>
             <Button.Flyout>
                 <MenuFlyout x:Name="DeviceFlyout" Placement="Bottom" />
             </Button.Flyout>
@@ -218,9 +231,9 @@
         <!-- Row under the dropdown: apps toggle on the left, power
              on the right. Power moved from the header row per user
              feedback ("below the selection dropdown on the right"). -->
-        <!-- Apps/Power row Y offset shifted up 6pt to track the
-             taller-to-shorter ComboBox change (32pt → 26pt height). -->
-        <Grid Margin="8,46,8,0" VerticalAlignment="Top">
+        <!-- Apps/Power row Y offset: 46 → 54 to preserve the 12pt
+             gap under the DeviceButton after it moved down 8pt too. -->
+        <Grid Margin="8,54,8,0" VerticalAlignment="Top">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -242,7 +255,7 @@
                     Click="OnPowerClicked" />
         </Grid>
 
-        <StackPanel Margin="0,70,0,0" HorizontalAlignment="Center" Spacing="8">
+        <StackPanel Margin="0,78,0,0" HorizontalAlignment="Center" Spacing="8">
 
             <Grid x:Name="Clickpad"
                   Width="130" Height="130"
