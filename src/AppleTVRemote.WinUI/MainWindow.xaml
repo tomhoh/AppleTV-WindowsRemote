@@ -253,7 +253,7 @@
                 </Ellipse>
             </Grid>
 
-            <Grid Margin="10,0,10,0">
+            <Grid Margin="6,0,6,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition />
                     <ColumnDefinition />
@@ -284,7 +284,7 @@
                         Tag="Siri"  Click="OnHidClicked" />
             </Grid>
 
-            <Grid Margin="10,0,10,0">
+            <Grid Margin="6,0,6,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition />
                     <ColumnDefinition />
