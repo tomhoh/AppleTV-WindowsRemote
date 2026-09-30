@@ -107,6 +107,14 @@ public sealed partial class MainWindow : WindowEx
         // it's open, which competes with the tray icon and confuses
         // users into thinking it's a regular window.
         try { AppWindow.IsShownInSwitchers = false; } catch { }
+
+        // Stay above other apps while visible so a stray click on the
+        // desktop doesn't shove the popup behind, say, an open browser.
+        // The tray-toggle path calls this window's Hide()/Activate(),
+        // and dismiss-on-Deactivated closes it — IsAlwaysOnTop just
+        // pins it above whatever else is on screen while it's open.
+        if (AppWindow.Presenter is OverlappedPresenter p2)
+            p2.IsAlwaysOnTop = true;
         // Force DWM to use its largest rounded-corner preference (~8 px).
         // SetWindowRgn was tried for a bigger 22 px radius, but it fought
         // with the system-drawn border and left a white frame behind —
@@ -120,19 +128,42 @@ public sealed partial class MainWindow : WindowEx
             NativeMethods.DwmSetWindowAttribute(hwnd,
                 NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE,
                 ref pref, sizeof(int));
-            // OverlappedPresenter's `hasBorder: false` doesn't suppress
-            // the Win11 accent-tinted 1px border that DWM composites
-            // around every top-level window — that's a separate attribute.
-            // DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE hides it, matching the
-            // frameless look of the WPF sibling.
-            int noBorder = unchecked((int)0xFFFFFFFE);   // DWMWA_COLOR_NONE
-            NativeMethods.DwmSetWindowAttribute(hwnd,
-                NativeMethods.DWMWA_BORDER_COLOR,
-                ref noBorder, sizeof(int));
+            // Initial border colour — ApplyTheme() re-runs this at
+            // theme-change time. See ApplyBorderColor() for the
+            // rationale: DWMWA_COLOR_NONE didn't fully hide the Win11
+            // accent border in practice, so we tint it to a shade
+            // slightly darker than the popup background instead.
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"DwmSetWindowAttribute failed: {ex}");
+        }
+    }
+
+    /// <summary>
+    /// Sets DWMWA_BORDER_COLOR to a shade slightly darker than the
+    /// popup background so the Win11 window frame reads as a thin
+    /// subtle outline rather than an accent-tinted stripe. Called from
+    /// ApplyLight/DarkBrushes so it tracks the system theme.
+    ///
+    /// COLORREF is `0x00BBGGRR`. Our colours are gray, so byte order
+    /// doesn't matter — 0x000F0F0F == #0F0F0F.
+    /// </summary>
+    private void ApplyBorderColor(bool dark)
+    {
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            // Dark bg  #1F1F1F → border #0F0F0F  (slightly darker)
+            // Light bg #F8F8F8 → border #DDDDDD  (slightly darker)
+            int color = dark ? 0x000F0F0F : 0x00DDDDDD;
+            NativeMethods.DwmSetWindowAttribute(hwnd,
+                NativeMethods.DWMWA_BORDER_COLOR,
+                ref color, sizeof(int));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"ApplyBorderColor failed: {ex}");
         }
     }
 
@@ -232,6 +263,7 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["SelectHoverFill"]   = Solid(0xAA, 0xFF, 0xFF, 0xFF);
         Root.RequestedTheme = ElementTheme.Light;
         PaintBrushConsumers();
+        ApplyBorderColor(dark: false);
     }
 
     private void ApplyDarkBrushes()
@@ -251,6 +283,7 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["SelectHoverFill"]   = Solid(0x80, 0xFF, 0xFF, 0xFF);
         Root.RequestedTheme = ElementTheme.Dark;
         PaintBrushConsumers();
+        ApplyBorderColor(dark: true);
     }
 
     /// <summary>
