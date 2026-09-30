@@ -150,6 +150,42 @@ public sealed partial class MainWindow : WindowEx
 
     public void PositionNearTray() => TrayWindowPositioner.PositionNearCursor(this);
 
+    /// <summary>
+    /// Re-run WinUI3AppBar's StripFrameStyles pattern and pin the
+    /// window to Z-order top via <c>SetWindowPos(HWND_TOPMOST)</c>.
+    /// Called from Activated on every show cycle because Win11 re-adds
+    /// the frame styles and drops the topmost bit on visibility
+    /// changes. The XAML `IsAlwaysOnTop="True"` on WindowEx handles
+    /// the initial state, but doesn't reliably re-assert after
+    /// Show/Hide cycles.
+    /// </summary>
+    private void ReinforceBorderlessTopmost()
+    {
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            // Strip the border-drawing bits again — Win11 sneaks them
+            // back on after certain state transitions (DPI change,
+            // taskbar-autohide toggle, focus changes, etc.).
+            long style = NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GWL_STYLE).ToInt64();
+            style &= ~((long)(NativeMethods.WS_CAPTION | NativeMethods.WS_THICKFRAME));
+            NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GWL_STYLE, (IntPtr)style);
+            // Force the OS to recompute the non-client rect AND lift
+            // the window to the topmost band. SWP_NOMOVE/NOSIZE keeps
+            // the position PositionNearTray already set; SWP_NOACTIVATE
+            // so we don't cause a spurious deactivation cycle.
+            NativeMethods.SetWindowPos(
+                hwnd, NativeMethods.HWND_TOPMOST,
+                0, 0, 0, 0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE
+                | NativeMethods.SWP_FRAMECHANGED | NativeMethods.SWP_NOACTIVATE);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"ReinforceBorderlessTopmost: {ex}");
+        }
+    }
+
     private void ApplyBorderlessPresenter()
     {
         // Deliberately NOT calling AppWindow.SetPresenter here.
@@ -206,6 +242,9 @@ public sealed partial class MainWindow : WindowEx
         internal const uint SWP_NOZORDER       = 0x0004;
         internal const uint SWP_NOACTIVATE     = 0x0010;
         internal const uint SWP_FRAMECHANGED   = 0x0020;
+        // Special hWndInsertAfter value for SetWindowPos — pins the
+        // window above all non-topmost windows in the Z-order.
+        internal static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 
         [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
         internal static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
