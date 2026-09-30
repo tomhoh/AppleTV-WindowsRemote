@@ -192,7 +192,7 @@
         <!-- Row under the dropdown: apps toggle on the left, power
              on the right. Power moved from the header row per user
              feedback ("below the selection dropdown on the right"). -->
-        <Grid Margin="8,44,8,0" VerticalAlignment="Top">
+        <Grid Margin="8,52,8,0" VerticalAlignment="Top">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -214,11 +214,11 @@
                     Click="OnPowerClicked" />
         </Grid>
 
-        <StackPanel Margin="0,74,0,0" HorizontalAlignment="Center" Spacing="8">
+        <StackPanel Margin="0,76,0,0" HorizontalAlignment="Center" Spacing="8">
 
             <Grid x:Name="Clickpad"
                   Width="130" Height="130"
-                  Margin="0,4,0,0"
+                  Margin="0,0,0,0"
                   Background="Transparent"
                   PointerPressed="OnClickpadPointerPressed"
                   PointerMoved="OnClickpadPointerMoved"
@@ -253,18 +253,24 @@
                 </Ellipse>
             </Grid>
 
-            <Grid Margin="6,0,6,0">
+            <Grid Margin="10,0,10,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition />
                     <ColumnDefinition />
                     <ColumnDefinition />
                 </Grid.ColumnDefinitions>
+                <!-- Margin="4,0" on each pill gives ~8pt of visible
+                     gap between adjacent buttons — user reported they
+                     were touching horizontally with the previous
+                     column-stretched layout. -->
                 <Button Grid.Column="0" Style="{StaticResource PillButton}"
+                        Margin="4,0"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE76B;"
                         Tag="Menu"  Click="OnHidClicked" />
                 <!-- Home: tap → home screen, hold → tvOS app-switcher. A
                      DispatcherQueueTimer started on press distinguishes them. -->
                 <Button Grid.Column="1" Style="{StaticResource PillButton}"
+                        Margin="4,0"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE7F4;"
                         Tag="Home"
                         ToolTipService.ToolTip="Home (hold for app switcher)"
@@ -273,16 +279,18 @@
                         PointerExited="OnHomeLeave"
                         PointerCanceled="OnHomeLeave" />
                 <Button Grid.Column="2" Style="{StaticResource PillButton}"
+                        Margin="4,0"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE720;"
                         Tag="Siri"  Click="OnHidClicked" />
             </Grid>
 
-            <Grid Margin="6,0,6,0">
+            <Grid Margin="10,0,10,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition />
                     <ColumnDefinition />
                 </Grid.ColumnDefinitions>
                 <Button Grid.Column="0" Style="{StaticResource PillButton}"
+                        Margin="4,0"
                         FontFamily="Segoe MDL2 Assets" Content="&#xF5B0;"
                         Tag="PlayPause"
                         HorizontalAlignment="Left"
@@ -291,6 +299,7 @@
                 <Border Grid.Column="1"
                         x:Name="VolumeRocker"
                         Width="44" Height="92"
+                        Margin="4,0"
                         HorizontalAlignment="Right"
                         CornerRadius="22"
                         Background="{StaticResource ButtonMaterial}"
