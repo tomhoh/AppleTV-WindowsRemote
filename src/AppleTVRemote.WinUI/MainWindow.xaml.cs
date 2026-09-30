@@ -128,11 +128,18 @@ public sealed partial class MainWindow : WindowEx
             NativeMethods.DwmSetWindowAttribute(hwnd,
                 NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE,
                 ref pref, sizeof(int));
+            // Belt-and-suspenders: disable DWM's non-client rendering
+            // policy so anything the frame *would* have drawn is skipped
+            // altogether. On Win11 builds where DWMWA_BORDER_COLOR alone
+            // still lets the focus accent tint bleed through, this
+            // suppresses the underlying draw. Value 1 = DWMNCRP_DISABLED.
+            int ncPolicy = 1;
+            NativeMethods.DwmSetWindowAttribute(hwnd,
+                NativeMethods.DWMWA_NCRENDERING_POLICY,
+                ref ncPolicy, sizeof(int));
             // Initial border colour — ApplyTheme() re-runs this at
-            // theme-change time. See ApplyBorderColor() for the
-            // rationale: DWMWA_COLOR_NONE didn't fully hide the Win11
-            // accent border in practice, so we tint it to a shade
-            // slightly darker than the popup background instead.
+            // theme-change time, and Activated re-runs it after focus
+            // changes in case Win11 stomps the attribute on activation.
         }
         catch (Exception ex)
         {
@@ -154,12 +161,24 @@ public sealed partial class MainWindow : WindowEx
         try
         {
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-            // Dark bg  #1F1F1F → border #0F0F0F  (slightly darker)
-            // Light bg #F8F8F8 → border #DDDDDD  (slightly darker)
-            int color = dark ? 0x000F0F0F : 0x00DDDDDD;
+            // Much subtler tint than v0.3.5 — 5 units darker instead of
+            // 16 — so if the DWMNCRP_DISABLED path doesn't fully kill
+            // the frame, what leaks through reads as a barely-
+            // perceptible outline rather than a distinct line.
+            // Dark bg  #1F1F1F → border #1A1A1A
+            // Light bg #F8F8F8 → border #EBEBEB
+            int color = dark ? 0x001A1A1A : 0x00EBEBEB;
             NativeMethods.DwmSetWindowAttribute(hwnd,
                 NativeMethods.DWMWA_BORDER_COLOR,
                 ref color, sizeof(int));
+            // Re-apply NC rendering-disabled every time the theme runs
+            // (which also fires on Activated) — Windows can reset this
+            // when a window is deactivated and re-focused, and one-shot
+            // application in ApplyBorderlessPresenter wasn't sticking.
+            int ncPolicy = 1;   // DWMNCRP_DISABLED
+            NativeMethods.DwmSetWindowAttribute(hwnd,
+                NativeMethods.DWMWA_NCRENDERING_POLICY,
+                ref ncPolicy, sizeof(int));
         }
         catch (Exception ex)
         {
@@ -169,6 +188,7 @@ public sealed partial class MainWindow : WindowEx
 
     private static class NativeMethods
     {
+        internal const int DWMWA_NCRENDERING_POLICY       = 2;
         internal const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
         internal const int DWMWA_BORDER_COLOR             = 34;
 
