@@ -189,16 +189,28 @@
              10pt gutter on each side. The old close-X + pair-button
              UI moved off the popup — dismissal is click-outside and
              pairing lives in the tray context menu. -->
+        <!-- Smaller pill-shaped device dropdown. Default ComboBox
+             height is ~32pt and CornerRadius 4; here we shrink to
+             Height=26 with CornerRadius=13 so the border reads as
+             a full pill (radius = height / 2). FontSize dropped
+             from the default 14 to 12 to match the compact size. -->
         <ComboBox x:Name="DeviceCombo"
                   HorizontalAlignment="Stretch"
                   VerticalAlignment="Top"
                   Margin="8,8,8,0"
+                  Height="26"
+                  MinHeight="26"
+                  FontSize="12"
+                  CornerRadius="13"
+                  Padding="10,0,4,0"
                   Visibility="Collapsed" />
 
         <!-- Row under the dropdown: apps toggle on the left, power
              on the right. Power moved from the header row per user
              feedback ("below the selection dropdown on the right"). -->
-        <Grid Margin="8,52,8,0" VerticalAlignment="Top">
+        <!-- Apps/Power row Y offset shifted up 6pt to track the
+             taller-to-shorter ComboBox change (32pt → 26pt height). -->
+        <Grid Margin="8,46,8,0" VerticalAlignment="Top">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -220,7 +232,7 @@
                     Click="OnPowerClicked" />
         </Grid>
 
-        <StackPanel Margin="0,76,0,0" HorizontalAlignment="Center" Spacing="8">
+        <StackPanel Margin="0,70,0,0" HorizontalAlignment="Center" Spacing="8">
 
             <Grid x:Name="Clickpad"
                   Width="130" Height="130"
