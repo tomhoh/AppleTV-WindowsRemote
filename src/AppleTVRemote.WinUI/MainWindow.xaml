@@ -210,18 +210,38 @@
                 VerticalContentAlignment="Center"
                 Content="Select Apple TV…"
                 Visibility="Collapsed">
-            <!-- Background matches the popup surface (transparent —
-                 lets Root.Background show through) so the button reads
-                 as a labeled pill on the remote body rather than a
-                 distinct control chrome. Hover / pressed use the same
-                 subtle Fill brushes the tray-icon pills use. -->
+            <!-- ThemeDictionaries with hardcoded colors — the previous
+                 `<StaticResource ResourceKey="SubtleFillColor…">` alias
+                 approach wasn't consistently resolving on Windows and
+                 left the button showing chrome by default. Default is
+                 fully transparent (Root.Background bleeds through);
+                 hover uses the SAME subtle tint as ClickpadHover so
+                 the two hover surfaces read as one visual language. -->
             <Button.Resources>
-                <SolidColorBrush x:Key="ButtonBackground"            Color="Transparent" />
-                <SolidColorBrush x:Key="ButtonBackgroundDisabled"    Color="Transparent" />
-                <StaticResource  x:Key="ButtonBackgroundPointerOver"
-                                 ResourceKey="SubtleFillColorSecondaryBrush" />
-                <StaticResource  x:Key="ButtonBackgroundPressed"
-                                 ResourceKey="SubtleFillColorTertiaryBrush" />
+                <ResourceDictionary>
+                    <ResourceDictionary.ThemeDictionaries>
+                        <ResourceDictionary x:Key="Dark">
+                            <SolidColorBrush x:Key="ButtonBackground"            Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBackgroundDisabled"    Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#08FFFFFF" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPressed"     Color="#14FFFFFF" />
+                            <SolidColorBrush x:Key="ButtonBorderBrush"           Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBorderBrushPressed"    Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBorderBrushDisabled"   Color="Transparent" />
+                        </ResourceDictionary>
+                        <ResourceDictionary x:Key="Light">
+                            <SolidColorBrush x:Key="ButtonBackground"            Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBackgroundDisabled"    Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#08000000" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPressed"     Color="#14000000" />
+                            <SolidColorBrush x:Key="ButtonBorderBrush"           Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBorderBrushPressed"    Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBorderBrushDisabled"   Color="Transparent" />
+                        </ResourceDictionary>
+                    </ResourceDictionary.ThemeDictionaries>
+                </ResourceDictionary>
             </Button.Resources>
             <Button.Flyout>
                 <MenuFlyout x:Name="DeviceFlyout" Placement="Bottom" />

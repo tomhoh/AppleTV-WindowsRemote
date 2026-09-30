@@ -371,8 +371,9 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["ButtonGlyph"]       = Solid(0xE6, 0x00, 0x00, 0x00);
         Root.Resources["ButtonStroke"]      = Solid(0x40, 0x00, 0x00, 0x00);
         Root.Resources["ClickpadRing"]      = Solid(0x26, 0x00, 0x00, 0x00);
-        // Softer hover — was 0x1E (~12% black), now 0x0F (~6% black).
-        Root.Resources["ClickpadHover"]     = Solid(0x0F, 0x00, 0x00, 0x00);
+        // Very subtle hover to match DeviceButton's PointerOver tint
+        // (~3 % black). Was 0x0F in v0.4.1.
+        Root.Resources["ClickpadHover"]     = Solid(0x08, 0x00, 0x00, 0x00);
         Root.Resources["ClickpadPressed"]   = Solid(0x33, 0x00, 0x00, 0x00);
         // Light mode keeps the semi-opaque white disc (per user
         // preference) — the disc reads as a soft highlight against
@@ -395,8 +396,9 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["ButtonGlyph"]       = Solid(0xE6, 0xFF, 0xFF, 0xFF);
         Root.Resources["ButtonStroke"]      = Solid(0x33, 0xFF, 0xFF, 0xFF);
         Root.Resources["ClickpadRing"]      = Solid(0x1A, 0xFF, 0xFF, 0xFF);
-        // Softer hover — was 0x1A (~10% white), now 0x0D (~5% white).
-        Root.Resources["ClickpadHover"]     = Solid(0x0D, 0xFF, 0xFF, 0xFF);
+        // Very subtle hover to match DeviceButton's PointerOver tint
+        // (~3 % white). Was 0x0D in v0.4.1.
+        Root.Resources["ClickpadHover"]     = Solid(0x08, 0xFF, 0xFF, 0xFF);
         Root.Resources["ClickpadPressed"]   = Solid(0x33, 0xFF, 0xFF, 0xFF);
         // Center-disc: dark like the clickpad ring itself. The 0.5pt
         // ButtonStroke around the ellipse is the "tiny defining border"
@@ -930,14 +932,25 @@ public sealed partial class MainWindow : WindowEx
         LauncherCol.Width = new GridLength(LauncherPanelWidth);
 
         LauncherPanel.Visibility = Visibility.Visible;
-        SetLauncherTranslation(-LauncherPanelWidth);   // start off-screen left
+        // Start with the panel translated one panel-width to the RIGHT
+        // — that puts it in the same screen region the remote occupies.
+        // Because the remote's Grid.Column="1" is declared AFTER the
+        // launcher's Column="0", XAML draws it on top, hiding the
+        // launcher completely. Animating back to X=0 makes the launcher
+        // slide out FROM BEHIND the remote toward the left, instead of
+        // popping into an empty column and sliding in from the far
+        // left edge (which was the v0.4.1 visual).
+        SetLauncherTranslation(LauncherPanelWidth);
         AnimateSlide(0);
     }
 
     private void CloseLauncher()
     {
         _launcherOpen = false;
-        AnimateSlide(-LauncherPanelWidth, onCompleted: () =>
+        // Reverse direction: slide the launcher back behind the remote
+        // (X=+LauncherPanelWidth) before we snap the window shut. Matches
+        // the open-direction reversal above.
+        AnimateSlide(LauncherPanelWidth, onCompleted: () =>
         {
             LauncherPanel.Visibility = Visibility.Collapsed;
             LauncherCol.Width = new GridLength(0);
