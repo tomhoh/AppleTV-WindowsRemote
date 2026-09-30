@@ -46,6 +46,13 @@ public sealed partial class MainWindow : WindowEx
     private HidCommand? _hoveredRegion;
     private readonly UISettings _uiSettings = new();
     private Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher;
+    /// <summary>
+    /// Global mouse-down hook that dismisses the popup on any click
+    /// outside its screen rect. Set up in the ctor and torn down on
+    /// Closed. This replaces the Activated/Deactivated auto-hide,
+    /// which fires unreliably for topmost windows on Win11.
+    /// </summary>
+    private LowLevelMouseHook? _outsideClickHook;
 
     public MainWindow()
     {
@@ -66,6 +73,9 @@ public sealed partial class MainWindow : WindowEx
         {
             if (args.WindowActivationState == WindowActivationState.Deactivated)
             {
+                // Belt on top of the mouse-hook suspenders — helps if
+                // focus is stolen via keyboard shortcut or another
+                // window's programmatic Activate.
                 this.Hide();
             }
             else
@@ -75,8 +85,13 @@ public sealed partial class MainWindow : WindowEx
                 ApplyTheme();
             }
         };
+        // Install the outside-click hook once; the callback checks
+        // IsVisible so a click while the popup is hidden is a no-op.
+        _outsideClickHook = new LowLevelMouseHook(OnGlobalMouseDown);
         Closed += async (_, _) =>
         {
+            _outsideClickHook?.Dispose();
+            _outsideClickHook = null;
             _uiSettings.ColorValuesChanged -= OnSystemColorsChanged;
             await TeardownActiveAsync();
         };
@@ -87,37 +102,74 @@ public sealed partial class MainWindow : WindowEx
         _dispatcher?.TryEnqueue(ApplyTheme);
     }
 
+    /// <summary>
+    /// Fires on the mouse-hook thread for every mouse-down anywhere on
+    /// screen. If the popup is visible and the click is outside its
+    /// screen rect, hide it. Marshals to the UI thread first because
+    /// AppWindow.Position/Size and Hide() must be UI-thread calls.
+    /// </summary>
+    private void OnGlobalMouseDown(int screenX, int screenY)
+    {
+        _dispatcher?.TryEnqueue(() =>
+        {
+            try
+            {
+                if (!AppWindow.IsVisible) return;
+                var pos  = AppWindow.Position;
+                var size = AppWindow.Size;
+                bool insideX = screenX >= pos.X && screenX <= pos.X + size.Width;
+                bool insideY = screenY >= pos.Y && screenY <= pos.Y + size.Height;
+                if (!(insideX && insideY))
+                    this.Hide();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"OnGlobalMouseDown: {ex}");
+            }
+        });
+    }
+
     public void PositionNearTray() => TrayWindowPositioner.PositionNearCursor(this);
 
     private void ApplyBorderlessPresenter()
     {
-        if (AppWindow.Presenter is OverlappedPresenter p)
-        {
-            // Standard WinUI 3 "no title bar, but keep the OS frame"
-            // configuration — hasBorder:true lets Windows draw the
-            // usual rounded corners, focus accent, and drop shadow.
-            // hasBorder:false attempts (v0.3.4-v0.3.6) fought with
-            // DWM: on some builds we got a classic-style thick white
-            // frame with square corners instead of no border at all.
-            // Matches how every other stock WinUI popup looks.
-            p.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
-            p.IsMaximizable = false;
-            p.IsMinimizable = false;
-            p.IsResizable   = false;
-        }
+        // OverlappedPresenter.CreateForContextMenu() is WinUI 3's
+        // canonical borderless popup preset (HasBorder=false,
+        // HasTitleBar=false, IsAlwaysOnTop=true, non-resizable). We
+        // start from it but immediately reinforce with the direct
+        // Win32 strip below — CreateForContextMenu alone left an
+        // OS-drawn frame on some Win11 builds.
+        AppWindow.SetPresenter(OverlappedPresenter.CreateForContextMenu());
+
         // Menu-bar-style app: hide from the taskbar and from Alt-Tab.
         // Without this the popup keeps a taskbar entry the whole time
         // it's open, which competes with the tray icon and confuses
         // users into thinking it's a regular window.
         try { AppWindow.IsShownInSwitchers = false; } catch { }
 
-        // Stay above other apps while visible so a stray click on the
-        // desktop doesn't shove the popup behind, say, an open browser.
-        // The tray-toggle path calls this window's Hide()/Activate(),
-        // and dismiss-on-Deactivated closes it — IsAlwaysOnTop just
-        // pins it above whatever else is on screen while it's open.
-        if (AppWindow.Presenter is OverlappedPresenter p2)
-            p2.IsAlwaysOnTop = true;
+        // Belt-and-braces border removal, straight from the WinUI3AppBar
+        // reference (StripFrameStyles + SWP_FRAMECHANGED). Strips the
+        // window styles that DWM uses to decide whether to composite a
+        // frame at all. WS_CAPTION covers WS_BORDER|WS_DLGFRAME;
+        // WS_THICKFRAME is the sizing edge. Then SWP_FRAMECHANGED forces
+        // the OS to recompute the non-client area with the new styles.
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            long style = NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GWL_STYLE).ToInt64();
+            style &= ~((long)(NativeMethods.WS_CAPTION | NativeMethods.WS_THICKFRAME));
+            NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GWL_STYLE, (IntPtr)style);
+            NativeMethods.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+                NativeMethods.SWP_FRAMECHANGED
+                | NativeMethods.SWP_NOMOVE
+                | NativeMethods.SWP_NOSIZE
+                | NativeMethods.SWP_NOZORDER
+                | NativeMethods.SWP_NOACTIVATE);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"StripFrameStyles failed: {ex}");
+        }
         // Force DWM to use its largest rounded-corner preference (~8 px).
         // SetWindowRgn was tried for a bigger 22 px radius, but it fought
         // with the system-drawn border and left a white frame behind —
@@ -151,8 +203,32 @@ public sealed partial class MainWindow : WindowEx
     {
         internal const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
 
+        // Window-style constants + SetWindowPos flags used by the
+        // StripFrameStyles routine, mirroring the WinUI3AppBar sample.
+        internal const int  GWL_STYLE          = -16;
+        internal const int  WS_CAPTION         = 0x00C00000;   // covers WS_BORDER | WS_DLGFRAME
+        internal const int  WS_THICKFRAME      = 0x00040000;
+        internal const uint SWP_NOSIZE         = 0x0001;
+        internal const uint SWP_NOMOVE         = 0x0002;
+        internal const uint SWP_NOZORDER       = 0x0004;
+        internal const uint SWP_NOACTIVATE     = 0x0010;
+        internal const uint SWP_FRAMECHANGED   = 0x0020;
+
         [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
         internal static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
+
+        // GetWindowLongPtr / SetWindowLongPtr are the 64-bit-safe
+        // variants — WinUI 3 apps run on x64/arm64 so we can't use the
+        // 32-bit-only GetWindowLong / SetWindowLong.
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+        internal static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+        internal static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+        internal static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+            int X, int Y, int cx, int cy, uint uFlags);
     }
 
     private void RefreshDevices()
