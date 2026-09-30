@@ -83,6 +83,13 @@ public sealed partial class MainWindow : WindowEx
                 // Re-check theme on each show — handles the case where
                 // the user changed system theme while the popup was hidden.
                 ApplyTheme();
+                // Re-apply StripFrameStyles + HWND_TOPMOST on every
+                // activation. Win11 re-adds WS_CAPTION | WS_THICKFRAME
+                // on show/hide cycles, and the presenter's
+                // IsAlwaysOnTop doesn't reliably re-assert Z-order on
+                // Activate — the WinUI3AppBar sample calls both
+                // explicitly on every visibility transition.
+                ReinforceBorderlessTopmost();
             }
         };
         // Install the outside-click hook once; the callback checks
@@ -100,6 +107,41 @@ public sealed partial class MainWindow : WindowEx
     private void OnSystemColorsChanged(UISettings sender, object args)
     {
         _dispatcher?.TryEnqueue(ApplyTheme);
+    }
+
+    /// <summary>
+    /// Re-run WinUI3AppBar's StripFrameStyles pattern and pin the
+    /// window to Z-order top via SetWindowPos(HWND_TOPMOST). Called
+    /// from Activated on every show cycle because Win11 re-adds the
+    /// frame styles and drops the topmost bit on visibility changes.
+    /// Presenter-level `IsAlwaysOnTop` alone isn't reliable across
+    /// the tray Show/Hide/Activate path.
+    /// </summary>
+    private void ReinforceBorderlessTopmost()
+    {
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            // Strip the border-drawing bits again — Win11 sneaks them
+            // back on after certain state changes (presenter swap,
+            // taskbar-visibility toggle, DPI change, etc.).
+            long style = NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GWL_STYLE).ToInt64();
+            style &= ~((long)(NativeMethods.WS_CAPTION | NativeMethods.WS_THICKFRAME));
+            NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GWL_STYLE, (IntPtr)style);
+            // Force the OS to recompute the non-client rect AND lift
+            // the window to the topmost band. SWP_NOMOVE/NOSIZE so we
+            // keep the position PositionNearTray already set;
+            // SWP_NOACTIVATE so we don't steal focus from ourselves.
+            NativeMethods.SetWindowPos(
+                hwnd, NativeMethods.HWND_TOPMOST,
+                0, 0, 0, 0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE
+                | NativeMethods.SWP_FRAMECHANGED | NativeMethods.SWP_NOACTIVATE);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"ReinforceBorderlessTopmost: {ex}");
+        }
     }
 
     /// <summary>
@@ -213,6 +255,9 @@ public sealed partial class MainWindow : WindowEx
         internal const uint SWP_NOZORDER       = 0x0004;
         internal const uint SWP_NOACTIVATE     = 0x0010;
         internal const uint SWP_FRAMECHANGED   = 0x0020;
+        // Special hWndInsertAfter value for SetWindowPos — pins the
+        // window above all non-topmost windows.
+        internal static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 
         [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
         internal static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
