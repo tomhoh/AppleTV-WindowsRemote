@@ -1,0 +1,45 @@
+<Window x:Class="AppleTVRemote.Windows.TextInputWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ResizeMode="NoResize"
+        Width="480"
+        Height="72"
+        SizeToContent="Manual">
+    <!-- Whole window content = one rounded translucent capsule
+         holding a big TextBox with "Search" placeholder. Nothing
+         else — no title bar, no close button, no OS chrome. Matches
+         the Mac sibling's borderless-transparent design. -->
+    <Border CornerRadius="14"
+            Background="#E6F6F6F6"
+            BorderThickness="0"
+            SnapsToDevicePixels="True">
+        <Grid>
+            <!-- Placeholder text sits behind the TextBox and is hidden
+                 by the TextBox's IsEmpty binding as soon as the user
+                 types. WPF has no first-class placeholder support. -->
+            <TextBlock x:Name="PlaceholderText"
+                       Text="Search"
+                       Foreground="#66000000"
+                       FontSize="24"
+                       Margin="22,0,20,0"
+                       VerticalAlignment="Center"
+                       IsHitTestVisible="False" />
+            <TextBox x:Name="InputBox"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     FontSize="24"
+                     Padding="20,0"
+                     VerticalContentAlignment="Center"
+                     Foreground="#F0000000"
+                     CaretBrush="#B0000000"
+                     AcceptsReturn="False"
+                     TextChanged="OnTextChanged"
+                     KeyDown="OnKeyDown" />
+        </Grid>
+    </Border>
+</Window>

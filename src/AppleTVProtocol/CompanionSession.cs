@@ -570,6 +570,27 @@ public sealed class CompanionSession : IAsyncDisposable
                     NowPlayingUpdated?.Invoke(this,
                         NowPlayingUpdate.FromInnerDict(content ?? new Dictionary<string, object?>()));
                 }
+                else if (identifier == "_tiStarted")
+                {
+                    // The TV surfaced a text field. Content dict carries
+                    // `_tiD` — the RTI binary plist we'll need to send
+                    // characters back at it. Cache + notify.
+                    byte[]? tiD = null;
+                    if (dict.TryGetValue("_c", out var contentBoxed) &&
+                        ConvertToStringKeyed(contentBoxed) is { } content &&
+                        content.TryGetValue("_tiD", out var tiBoxed) &&
+                        tiBoxed is byte[] tiBytes)
+                    {
+                        tiD = tiBytes;
+                    }
+                    _currentTiD = tiD;
+                    KeyboardActiveChanged?.Invoke(this, new KeyboardActiveEventArgs(true, tiD));
+                }
+                else if (identifier == "_tiStopped")
+                {
+                    _currentTiD = null;
+                    KeyboardActiveChanged?.Invoke(this, new KeyboardActiveEventArgs(false, null));
+                }
                 return;
         }
     }
@@ -581,6 +602,85 @@ public sealed class CompanionSession : IAsyncDisposable
     /// playing on the TV.
     /// </summary>
     public event EventHandler<NowPlayingUpdate>? NowPlayingUpdated;
+
+    /// <summary>
+    /// Raised when the TV pushes <c>_tiStarted</c> (a text field opened) or
+    /// <c>_tiStopped</c> (closed). The UI listens for this to show / hide
+    /// its floating input strip.
+    /// </summary>
+    public event EventHandler<KeyboardActiveEventArgs>? KeyboardActiveChanged;
+
+    /// <summary>The most recent `_tiD` (RTI plist) the TV volunteered
+    /// via `_tiStarted`, or null if no field is currently active. Kept
+    /// as the source of truth for <see cref="SendTextAsync"/>.</summary>
+    private byte[]? _currentTiD;
+
+    /// <summary>True iff the TV has an active text field waiting for input.</summary>
+    public bool KeyboardActive => _currentTiD is not null;
+
+    /// <summary>
+    /// Append <paramref name="text"/> to the ATV's currently-focused text
+    /// field via an RTI insertion. No-op if no field is active
+    /// (<see cref="KeyboardActive"/> is false). Fire-and-forget event; the
+    /// TV echoes the text into its own field but doesn't respond.
+    /// </summary>
+    public async Task SendTextAsync(string text, CancellationToken cancel = default)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        if (_currentTiD is not { } tiD) return;   // no field open
+        var uuid = RTITextOperations.ExtractSessionUuid(tiD);
+        if (uuid is null) return;
+        var payload = RTITextOperations.InputPayload(uuid, text);
+        var content = new Dictionary<string, object?>
+        {
+            { "_tiV", 1 },
+            { "_tiD", payload },
+        };
+        await SendEventNoWaitAsync("_tiC", content, cancel).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Delete the last character of the ATV's currently-focused text
+    /// field. Under the hood this stops+restarts the RTI session to
+    /// refresh the session UUID + current text (see Swift sibling), then
+    /// asserts the truncated text.
+    /// </summary>
+    public async Task SendBackspaceAsync(CancellationToken cancel = default)
+    {
+        // Refresh the RTI session so we read the current text off the
+        // TV, not our stale cache — the assert-payload path needs the
+        // exact current contents (mirrors Swift's sendBackspace).
+        await SendEventNoWaitAsync("_tiStop", new Dictionary<string, object?>(), cancel).ConfigureAwait(false);
+        var startResp = await SendRequestAsync(
+            "_tiStart",
+            new Dictionary<string, object?>(),
+            timeout: TimeSpan.FromSeconds(5),
+            cancel: cancel).ConfigureAwait(false);
+        byte[]? freshTiD = null;
+        if (startResp.TryGetValue("_c", out var contentBoxed) &&
+            ConvertToStringKeyed(contentBoxed) is { } inner &&
+            inner.TryGetValue("_tiD", out var tiBoxed) &&
+            tiBoxed is byte[] tiBytes)
+        {
+            freshTiD = tiBytes;
+        }
+        if (freshTiD is null) return;
+        _currentTiD = freshTiD;
+
+        var uuid = RTITextOperations.ExtractSessionUuid(freshTiD);
+        if (uuid is null) return;
+        var current = RTITextOperations.ExtractCurrentText(freshTiD) ?? "";
+        if (current.Length == 0) return;
+        var updated = current.Substring(0, current.Length - 1);
+
+        var payload = RTITextOperations.AssertPayload(uuid, updated);
+        var body = new Dictionary<string, object?>
+        {
+            { "_tiV", 1 },
+            { "_tiD", payload },
+        };
+        await SendEventNoWaitAsync("_tiC", body, cancel).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Coerce OPACK's various numeric encodings to <see cref="int"/>.
@@ -615,5 +715,23 @@ public sealed class CompanionSession : IAsyncDisposable
             dst[sk] = kv.Value;
         }
         return dst;
+    }
+}
+
+/// <summary>
+/// Payload for <see cref="CompanionSession.KeyboardActiveChanged"/>.
+/// <see cref="Active"/> is true on <c>_tiStarted</c>, false on
+/// <c>_tiStopped</c>. <see cref="TiD"/> carries the RTI plist when the
+/// field just opened, and is null on close.
+/// </summary>
+public sealed class KeyboardActiveEventArgs : EventArgs
+{
+    public bool    Active { get; }
+    public byte[]? TiD    { get; }
+
+    public KeyboardActiveEventArgs(bool active, byte[]? tiD)
+    {
+        Active = active;
+        TiD    = tiD;
     }
 }

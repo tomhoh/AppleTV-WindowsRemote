@@ -23,10 +23,11 @@ namespace AppleTVRemote.Windows;
 
 public partial class MainWindow : Window
 {
-    private readonly CredentialStore _store = new();
-    private CompanionConnection? _conn;
-    private CompanionSession?    _session;
-    private StoredCredentials?   _activeDevice;
+    private readonly CredentialStore  _store = new();
+    private CompanionConnection?      _conn;
+    private CompanionSession?         _session;
+    private StoredCredentials?        _activeDevice;
+    private TextInputWindowManager?   _textInput;
 
     // Clickpad geometry: must match the XAML.
     private const double ClickpadDiameter      = 130;
@@ -555,9 +556,13 @@ public partial class MainWindow : Window
             // rebuilds it instead of timing out against a dead connection.
             conn.Closed += (_, _) =>
             {
-                _session = null;
-                _conn = null;
+                var ti = _textInput;
+                _textInput = null;
+                _session   = null;
+                _conn      = null;
                 _activeDevice = null;
+                if (ti is not null)
+                    Dispatcher.BeginInvoke(new Action(() => { try { ti.Dispose(); } catch { } }));
             };
             await conn.ConnectAsync();
             await new CompanionPairVerify(conn).RunAsync(selected.Credentials);
@@ -565,6 +570,10 @@ public partial class MainWindow : Window
             _session       = new CompanionSession(conn);
             _session.NowPlayingUpdated += OnNowPlayingUpdated;
             _activeDevice  = selected;
+            _textInput     = new TextInputWindowManager(
+                _session,
+                resolvePopup: () => this.IsVisible ? this : null,
+                dismissPopup: () => Dispatcher.Invoke(() => this.Hide()));
 
             // Run the Companion session-init handshake.
             // The v0.1.20–22 failures were the pair-verify M4 race (fixed in
@@ -595,6 +604,8 @@ public partial class MainWindow : Window
 
     private async Task TeardownActiveAsync()
     {
+        if (_textInput is { } ti) { try { ti.Dispose(); } catch { } }
+        _textInput = null;
         if (_session is { } s)
         {
             try { s.NowPlayingUpdated -= OnNowPlayingUpdated; } catch { }
