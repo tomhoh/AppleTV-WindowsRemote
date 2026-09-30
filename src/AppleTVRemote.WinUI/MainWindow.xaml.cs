@@ -120,6 +120,15 @@ public sealed partial class MainWindow : WindowEx
             NativeMethods.DwmSetWindowAttribute(hwnd,
                 NativeMethods.DWMWA_WINDOW_CORNER_PREFERENCE,
                 ref pref, sizeof(int));
+            // OverlappedPresenter's `hasBorder: false` doesn't suppress
+            // the Win11 accent-tinted 1px border that DWM composites
+            // around every top-level window — that's a separate attribute.
+            // DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE hides it, matching the
+            // frameless look of the WPF sibling.
+            int noBorder = unchecked((int)0xFFFFFFFE);   // DWMWA_COLOR_NONE
+            NativeMethods.DwmSetWindowAttribute(hwnd,
+                NativeMethods.DWMWA_BORDER_COLOR,
+                ref noBorder, sizeof(int));
         }
         catch (Exception ex)
         {
@@ -130,6 +139,7 @@ public sealed partial class MainWindow : WindowEx
     private static class NativeMethods
     {
         internal const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        internal const int DWMWA_BORDER_COLOR             = 34;
 
         [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
         internal static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int pvAttribute, int cbAttribute);
