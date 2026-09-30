@@ -92,6 +92,10 @@ public partial class App : Application
         }
 
         menu.Items.Add(new MenuItem { Header = "Open", Command = null }.WithClick(OnOpenClicked));
+        // Pair-a-new-device belongs in the tray menu for parity with
+        // the WinUI variant — matches the "no chrome on the popup"
+        // direction. Reuses MainWindow's existing pair flow.
+        menu.Items.Add(new MenuItem { Header = "Pair a new Apple TV…" }.WithClick(OnPairNewClicked));
 
         var startup = new MenuItem
         {
@@ -104,6 +108,15 @@ public partial class App : Application
 
         menu.Items.Add(new Separator());
         menu.Items.Add(new MenuItem { Header = "Exit" }.WithClick(OnExitClicked));
+    }
+
+    private void OnPairNewClicked(object sender, RoutedEventArgs e)
+    {
+        EnsurePopup();
+        _popup!.PositionNearTray();
+        _popup.Show();
+        _popup.Activate();
+        _popup.OpenPairing();
     }
 
     private void OnDeviceQuickSwitchClicked(object sender, RoutedEventArgs e)

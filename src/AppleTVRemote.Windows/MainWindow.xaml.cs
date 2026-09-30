@@ -502,6 +502,10 @@ public partial class MainWindow : Window
 
     // ─── Pairing entry point ───────────────────────────────────────
 
+    /// <summary>Open the standalone pair-setup window. Public so the
+    /// tray menu (App.xaml.cs) can invoke it.</summary>
+    public void OpenPairing() => OnOpenPairClicked(this, new RoutedEventArgs());
+
     private void OnOpenPairClicked(object sender, RoutedEventArgs e)
     {
         var dlg = new PairingWindow { Owner = this };

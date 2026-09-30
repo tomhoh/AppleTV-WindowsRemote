@@ -20,10 +20,10 @@
       (which the framework raises when the system theme flips).
     -->
 
-    <winuiex:WindowEx.SystemBackdrop>
-        <MicaBackdrop Kind="BaseAlt" />
-    </winuiex:WindowEx.SystemBackdrop>
-
+    <!-- No SystemBackdrop: Mica had a blue-tinted look that didn't match the
+         desktop mode. The Grid's Background is set from code in ApplyTheme()
+         to the neutral system window background (near-black in dark mode,
+         near-white in light) so the popup blends with the desktop. -->
     <Grid x:Name="Root" RequestedTheme="Default">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />   <!-- Now-Playing banner (collapsed unless metadata) -->
@@ -179,56 +179,42 @@
         <!-- ── Column 1: remote ── -->
         <Grid Grid.Column="1">
 
-        <!-- Top-left: close X -->
-        <Button x:Name="CloseBtn"
-                Style="{StaticResource CircleButton}"
-                Content="&#xE8BB;"
-                FontFamily="Segoe MDL2 Assets"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Top"
-                Margin="12,10,0,0"
-                ToolTipService.ToolTip="Close"
-                Click="OnCloseClicked" />
+        <!-- Full-width device dropdown at the top of the popup, with
+             10pt gutter on each side. The old close-X + pair-button
+             UI moved off the popup — dismissal is click-outside and
+             pairing lives in the tray context menu. -->
+        <ComboBox x:Name="DeviceCombo"
+                  HorizontalAlignment="Stretch"
+                  VerticalAlignment="Top"
+                  Margin="10,10,10,0"
+                  Visibility="Collapsed" />
 
-        <!-- Below close: apps grid toggle -->
-        <Button x:Name="AppsBtn"
-                Style="{StaticResource CircleButton}"
-                Content="&#xE71D;"
-                FontFamily="Segoe MDL2 Assets"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Top"
-                Margin="12,38,0,0"
-                ToolTipService.ToolTip="Apps"
-                Click="OnAppsClicked" />
-
-        <!-- Top-right: power -->
-        <Button x:Name="PowerBtn"
-                Style="{StaticResource CircleButton}"
-                Content="&#xE7E8;"
-                FontFamily="Segoe MDL2 Assets"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Top"
-                Margin="0,10,12,0"
-                ToolTipService.ToolTip="Wake"
-                Click="OnPowerClicked" />
-
-        <StackPanel Orientation="Horizontal"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Top"
-                    Margin="0,10,0,0"
-                    Spacing="6">
-            <ComboBox x:Name="DeviceCombo"
-                      Width="100"
-                      Visibility="Collapsed" />
-            <Button x:Name="OpenPairBtn"
+        <!-- Row under the dropdown: apps toggle on the left, power
+             on the right. Power moved from the header row per user
+             feedback ("below the selection dropdown on the right"). -->
+        <Grid Margin="10,52,10,0" VerticalAlignment="Top">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Button Grid.Column="0"
+                    x:Name="AppsBtn"
                     Style="{StaticResource CircleButton}"
-                    Content="&#xE710;"
+                    Content="&#xE71D;"
                     FontFamily="Segoe MDL2 Assets"
-                    ToolTipService.ToolTip="Pair a new Apple TV"
-                    Click="OnOpenPairClicked" />
-        </StackPanel>
+                    ToolTipService.ToolTip="Apps"
+                    Click="OnAppsClicked" />
+            <Button Grid.Column="2"
+                    x:Name="PowerBtn"
+                    Style="{StaticResource CircleButton}"
+                    Content="&#xE7E8;"
+                    FontFamily="Segoe MDL2 Assets"
+                    ToolTipService.ToolTip="Wake"
+                    Click="OnPowerClicked" />
+        </Grid>
 
-        <StackPanel Margin="0,42,0,0" HorizontalAlignment="Center" Spacing="12">
+        <StackPanel Margin="0,90,0,0" HorizontalAlignment="Center" Spacing="12">
 
             <Grid x:Name="Clickpad"
                   Width="130" Height="130"
