@@ -93,11 +93,20 @@ public sealed partial class MainWindow : WindowEx
     {
         if (AppWindow.Presenter is OverlappedPresenter p)
         {
-            p.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
+            // No system border and no title bar — matches the Mac
+            // popover feel. The old `hasBorder: true` drew a subtle
+            // OS window frame that combined with our own rounded
+            // background to look boxed-in.
+            p.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
             p.IsMaximizable = false;
             p.IsMinimizable = false;
             p.IsResizable   = false;
         }
+        // Menu-bar-style app: hide from the taskbar and from Alt-Tab.
+        // Without this the popup keeps a taskbar entry the whole time
+        // it's open, which competes with the tray icon and confuses
+        // users into thinking it's a regular window.
+        try { AppWindow.IsShownInSwitchers = false; } catch { }
         // Force DWM to use its largest rounded-corner preference (~8 px).
         // SetWindowRgn was tried for a bigger 22 px radius, but it fought
         // with the system-drawn border and left a white frame behind —
@@ -198,6 +207,9 @@ public sealed partial class MainWindow : WindowEx
 
     private void ApplyLightBrushes()
     {
+        // Neutral near-white background to match system light-mode
+        // windows — no Mica tint. Matches WPF sibling's #FFF8F8F8.
+        Root.Background = Solid(0xFF, 0xF8, 0xF8, 0xF8);
         Root.Resources["ButtonMaterial"]    = Solid(0x33, 0x00, 0x00, 0x00);
         Root.Resources["ButtonMaterialHv"]  = Solid(0x52, 0x00, 0x00, 0x00);
         Root.Resources["ButtonMaterialDn"]  = Solid(0x72, 0x00, 0x00, 0x00);
@@ -208,11 +220,15 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["ClickpadPressed"]   = Solid(0x33, 0x00, 0x00, 0x00);
         Root.Resources["SelectFill"]        = Solid(0x80, 0xFF, 0xFF, 0xFF);
         Root.Resources["SelectHoverFill"]   = Solid(0xAA, 0xFF, 0xFF, 0xFF);
+        Root.RequestedTheme = ElementTheme.Light;
         PaintBrushConsumers();
     }
 
     private void ApplyDarkBrushes()
     {
+        // Neutral near-black background to match system dark-mode
+        // windows — no Mica blue-ish tint. Matches WPF sibling's #FF1F1F1F.
+        Root.Background = Solid(0xFF, 0x1F, 0x1F, 0x1F);
         Root.Resources["ButtonMaterial"]    = Solid(0x26, 0xFF, 0xFF, 0xFF);
         Root.Resources["ButtonMaterialHv"]  = Solid(0x40, 0xFF, 0xFF, 0xFF);
         Root.Resources["ButtonMaterialDn"]  = Solid(0x5C, 0xFF, 0xFF, 0xFF);
@@ -223,6 +239,7 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["ClickpadPressed"]   = Solid(0x33, 0xFF, 0xFF, 0xFF);
         Root.Resources["SelectFill"]        = Solid(0x66, 0xFF, 0xFF, 0xFF);
         Root.Resources["SelectHoverFill"]   = Solid(0x80, 0xFF, 0xFF, 0xFF);
+        Root.RequestedTheme = ElementTheme.Dark;
         PaintBrushConsumers();
     }
 
@@ -251,7 +268,6 @@ public sealed partial class MainWindow : WindowEx
         VolUpGlyph.Foreground    = glyph;
         VolDownGlyph.Foreground  = glyph;
 
-        ApplyToButton(CloseBtn, material, stroke, glyph);
         ApplyToButton(PowerBtn, material, stroke, glyph);
 
         // The other pill buttons live inside Grids by index; walk Root.
@@ -278,7 +294,7 @@ public sealed partial class MainWindow : WindowEx
         for (int i = 0; i < n; i++)
         {
             var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
-            if (child is Button b && b.Name is not "CloseBtn" and not "PowerBtn")
+            if (child is Button b && b.Name is not "PowerBtn")
                 ApplyToButton(b, bg, stroke, glyph);
             WalkButtons(child, bg, stroke, glyph);
         }
@@ -515,8 +531,6 @@ public sealed partial class MainWindow : WindowEx
         _homeLongFired = false;
     }
 
-    private void OnCloseClicked(object sender, RoutedEventArgs e) => this.Hide();
-
     private async void OnVolumePointerPressed(object sender, PointerRoutedEventArgs e)
     {
         if (sender is not Border b) return;
@@ -544,7 +558,12 @@ public sealed partial class MainWindow : WindowEx
 
     private PairingWindow? _pairingWindow;
 
-    private void OnOpenPairClicked(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Open the standalone pair-setup window. Public so the tray
+    /// context menu (App.xaml.cs) can invoke it — the old in-popup
+    /// "pair" button was removed to keep the popup lean.
+    /// </summary>
+    public void OpenPairing()
     {
         // PairingWindow used to live as a ContentDialog inside this
         // popup, but a ContentDialog is bounded by the popup's tiny

@@ -104,6 +104,21 @@ public partial class App : Application
         openItem.Command = new RelayCommand(_ => TogglePopup());
         flyout.Items.Add(openItem);
 
+        // Pair-a-new-device moved off the popup into the tray menu —
+        // keeps the popup layout lean and matches the tray-first
+        // philosophy of the rest of the menu.
+        var pairItem = new MenuFlyoutItem { Text = "Pair a new Apple TV…" };
+        pairItem.Command = new RelayCommand(_ =>
+        {
+            if (_popup is null)
+            {
+                _popup = new MainWindow();
+                _popup.Closed += (_, _) => _popup = null;
+            }
+            _popup.OpenPairing();
+        });
+        flyout.Items.Add(pairItem);
+
         var startupItem = new ToggleMenuFlyoutItem
         {
             Text      = "Open at login",
