@@ -18,7 +18,9 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
 using Windows.UI;
@@ -33,6 +35,14 @@ public sealed partial class MainWindow : WindowEx
     private CompanionConnection? _conn;
     private CompanionSession?    _session;
     private StoredCredentials?   _activeDevice;
+    /// <summary>
+    /// The device currently *chosen* in the DeviceButton flyout — what
+    /// EnsureSessionAsync will connect to on the next button press.
+    /// May differ from <see cref="_activeDevice"/>, which is the device
+    /// with a live session. Was `DeviceCombo.SelectedItem` before the
+    /// swap to Button + MenuFlyout.
+    /// </summary>
+    private StoredCredentials?   _selectedDevice;
     private TextInputWindowManager? _textInput;
 
     private const double ClickpadDiameter      = 130;
@@ -265,15 +275,38 @@ public sealed partial class MainWindow : WindowEx
 
     private void RefreshDevices()
     {
-        DeviceCombo.ItemsSource = null;
+        DeviceFlyout.Items.Clear();
         var creds = _store.LoadAll();
-        DeviceCombo.DisplayMemberPath = nameof(StoredCredentials.DisplayName);
-        DeviceCombo.ItemsSource = creds;
-        if (creds.Count > 0)
+        if (creds.Count == 0)
         {
-            DeviceCombo.SelectedIndex = 0;
-            DeviceCombo.Visibility = Visibility.Visible;
+            DeviceButton.Visibility = Visibility.Collapsed;
+            _selectedDevice = null;
+            return;
         }
+        foreach (var cred in creds)
+        {
+            var captured = cred;
+            var item = new MenuFlyoutItem { Text = cred.DisplayName };
+            item.Click += (_, _) => SetSelectedDevice(captured);
+            DeviceFlyout.Items.Add(item);
+        }
+        DeviceButton.Visibility = Visibility.Visible;
+        // Preserve the current selection across a refresh if it still
+        // exists — otherwise default to the first paired device.
+        var current = _selectedDevice;
+        var keep = current is not null
+            ? creds.FirstOrDefault(c => c.DeviceId == current.DeviceId)
+            : null;
+        SetSelectedDevice(keep ?? creds[0]);
+    }
+
+    /// <summary>Update the button label + `_selectedDevice`.</summary>
+    private void SetSelectedDevice(StoredCredentials cred)
+    {
+        _selectedDevice = cred;
+        DeviceButton.Content = string.IsNullOrWhiteSpace(cred.DisplayName)
+            ? "Apple TV"
+            : cred.DisplayName;
     }
 
     /// <summary>
@@ -283,14 +316,8 @@ public sealed partial class MainWindow : WindowEx
     public void SelectStoredDevice(string deviceId)
     {
         RefreshDevices();
-        foreach (var item in DeviceCombo.Items)
-        {
-            if (item is StoredCredentials sc && sc.DeviceId == deviceId)
-            {
-                DeviceCombo.SelectedItem = item;
-                break;
-            }
-        }
+        var match = _store.LoadAll().FirstOrDefault(c => c.DeviceId == deviceId);
+        if (match is not null) SetSelectedDevice(match);
     }
 
     /// <summary>Device id of the currently-live session, or null if idle.</summary>
@@ -298,7 +325,7 @@ public sealed partial class MainWindow : WindowEx
 
     /// <summary>
     /// Tear down any active session and open a new one against whatever
-    /// <see cref="DeviceCombo"/> currently has selected. Called from the
+    /// <see cref="_selectedDevice"/> currently holds. Called from the
     /// tray quick-switch menu so picking a paired device reconnects
     /// silently in the background — no need for the user to click a
     /// remote button just to trigger the switch.
@@ -346,6 +373,10 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["ClickpadRing"]      = Solid(0x26, 0x00, 0x00, 0x00);
         Root.Resources["ClickpadHover"]     = Solid(0x1E, 0x00, 0x00, 0x00);
         Root.Resources["ClickpadPressed"]   = Solid(0x33, 0x00, 0x00, 0x00);
+        // Light mode keeps the semi-opaque white disc (per user
+        // preference) — the disc reads as a soft highlight against
+        // the near-white popup background. Only dark mode gets the
+        // darker "match the ring" treatment (see ApplyDarkBrushes).
         Root.Resources["SelectFill"]        = Solid(0x80, 0xFF, 0xFF, 0xFF);
         Root.Resources["SelectHoverFill"]   = Solid(0xAA, 0xFF, 0xFF, 0xFF);
         Root.RequestedTheme = ElementTheme.Light;
@@ -365,8 +396,12 @@ public sealed partial class MainWindow : WindowEx
         Root.Resources["ClickpadRing"]      = Solid(0x1A, 0xFF, 0xFF, 0xFF);
         Root.Resources["ClickpadHover"]     = Solid(0x1A, 0xFF, 0xFF, 0xFF);
         Root.Resources["ClickpadPressed"]   = Solid(0x33, 0xFF, 0xFF, 0xFF);
-        Root.Resources["SelectFill"]        = Solid(0x66, 0xFF, 0xFF, 0xFF);
-        Root.Resources["SelectHoverFill"]   = Solid(0x80, 0xFF, 0xFF, 0xFF);
+        // Center-disc: dark like the clickpad ring itself. The 0.5pt
+        // ButtonStroke around the ellipse is the "tiny defining border"
+        // that separates the disc from the surrounding ring. Hover fill
+        // is a shade brighter so the disc still lights up on pointer.
+        Root.Resources["SelectFill"]        = Solid(0x1A, 0xFF, 0xFF, 0xFF);
+        Root.Resources["SelectHoverFill"]   = Solid(0x33, 0xFF, 0xFF, 0xFF);
         Root.RequestedTheme = ElementTheme.Dark;
         PaintBrushConsumers();
     }
@@ -711,15 +746,7 @@ public sealed partial class MainWindow : WindowEx
             _pairingWindow = null;
             if (pw.PairedCredentials is { } c)
             {
-                RefreshDevices();
-                foreach (var item in DeviceCombo.Items)
-                {
-                    if (item is StoredCredentials sc && sc.DeviceId == c.DeviceId)
-                    {
-                        DeviceCombo.SelectedItem = item;
-                        break;
-                    }
-                }
+                SelectStoredDevice(c.DeviceId);
             }
         };
         pw.Activate();
@@ -729,9 +756,9 @@ public sealed partial class MainWindow : WindowEx
 
     private async Task<CompanionSession?> EnsureSessionAsync()
     {
-        if (DeviceCombo.SelectedItem is not StoredCredentials selected)
+        if (_selectedDevice is not { } selected)
         {
-            await ShowMessageAsync("No paired Apple TV. Click the + button to pair one.");
+            await ShowMessageAsync("No paired Apple TV. Use the tray menu to pair one.");
             return null;
         }
         if (_session is not null && _activeDevice?.DeviceId == selected.DeviceId)
@@ -891,8 +918,8 @@ public sealed partial class MainWindow : WindowEx
     {
         _launcherOpen = true;
         // Snap the window to its open size in ONE step — per-frame
-        // AppWindow.MoveAndResize for transparent + acrylic popups is
-        // brutally jerky on the desktop compositor.
+        // AppWindow.MoveAndResize is brutally jerky on the desktop
+        // compositor for popup-style windows.
         var size = AppWindow.Size;
         var pos  = AppWindow.Position;
         double scale = Width > 0 ? size.Width / Width : 1.0;
@@ -900,10 +927,8 @@ public sealed partial class MainWindow : WindowEx
         AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(pos.X - colPx, pos.Y, size.Width + colPx, size.Height));
         LauncherCol.Width = new GridLength(LauncherPanelWidth);
 
-        // Now animate JUST the TranslateTransform on the panel — Microsoft.UI
-        // .Composition handles this on the compositor thread, GPU-accelerated.
         LauncherPanel.Visibility = Visibility.Visible;
-        LauncherSlide.X = -LauncherPanelWidth;
+        SetLauncherTranslation(-LauncherPanelWidth);   // start off-screen left
         AnimateSlide(0);
     }
 
@@ -914,9 +939,9 @@ public sealed partial class MainWindow : WindowEx
         {
             LauncherPanel.Visibility = Visibility.Collapsed;
             LauncherCol.Width = new GridLength(0);
-            LauncherSlide.X = 0;
+            SetLauncherTranslation(0);
 
-            // Now snap window back to remote-only.
+            // Snap window back to remote-only.
             var size = AppWindow.Size;
             var pos  = AppWindow.Position;
             double scale = Width > 0 ? size.Width / Width : 1.0;
@@ -926,31 +951,51 @@ public sealed partial class MainWindow : WindowEx
     }
 
     /// <summary>
-    /// Animate the launcher panel's TranslateTransform.X — driven by the
-    /// WinUI Composition layer (compositor thread, no per-frame UI work)
-    /// for buttery slide. Uses Storyboard so we get proper Completed
-    /// callback support, with a 220 ms cubic ease-out matching the WPF
-    /// sibling.
+    /// Set the LauncherPanel visual's Translation immediately (no
+    /// animation). Used to pre-position the panel off-screen before
+    /// sliding it in, and to reset after the close animation.
+    /// </summary>
+    private void SetLauncherTranslation(double x)
+    {
+        ElementCompositionPreview.SetIsTranslationEnabled(LauncherPanel, true);
+        var visual = ElementCompositionPreview.GetElementVisual(LauncherPanel);
+        visual.Properties.InsertVector3("Translation",
+            new System.Numerics.Vector3((float)x, 0, 0));
+    }
+
+    /// <summary>
+    /// Slide the launcher panel via a Composition animation on the
+    /// visual's Translation property. This runs on the compositor
+    /// thread — the previous DoubleAnimation on RenderTransform.X was
+    /// a dependent animation running UI-thread-bound, which produced
+    /// the jerky slide the user reported. Composition animations are
+    /// GPU-accelerated and immune to UI-thread contention.
     /// </summary>
     private void AnimateSlide(double targetX, Action? onCompleted = null)
     {
-        var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
-        {
-            To = targetX,
-            Duration = new Microsoft.UI.Xaml.Duration(LauncherAnimDuration),
-            EasingFunction = new Microsoft.UI.Xaml.Media.Animation.CubicEase
-            {
-                EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut,
-            },
-            EnableDependentAnimation = true,
-        };
-        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, LauncherSlide);
-        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, "X");
-        var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
-        sb.Children.Add(anim);
+        ElementCompositionPreview.SetIsTranslationEnabled(LauncherPanel, true);
+        var visual = ElementCompositionPreview.GetElementVisual(LauncherPanel);
+        var compositor = visual.Compositor;
+
+        // Cubic-bezier equivalent of the CSS "ease-out-quart" curve —
+        // gives a natural decelerate that feels smoother than the
+        // built-in CubicEase.EaseOut at the same duration.
+        var easing = compositor.CreateCubicBezierEasingFunction(
+            new System.Numerics.Vector2(0.16f, 1f),
+            new System.Numerics.Vector2(0.3f,  1f));
+
+        var anim = compositor.CreateVector3KeyFrameAnimation();
+        anim.Duration = LauncherAnimDuration;
+        anim.Target   = "Translation";
+        anim.InsertKeyFrame(1f,
+            new System.Numerics.Vector3((float)targetX, 0, 0),
+            easing);
+
+        var batch = compositor.CreateScopedBatch(CompositionBatchTypes.Animation);
+        visual.StartAnimation("Translation", anim);
+        batch.End();
         if (onCompleted is not null)
-            sb.Completed += (_, _) => onCompleted();
-        sb.Begin();
+            batch.Completed += (_, _) => onCompleted();
     }
 
     private async Task FetchAppsAsync(CompanionSession session)
