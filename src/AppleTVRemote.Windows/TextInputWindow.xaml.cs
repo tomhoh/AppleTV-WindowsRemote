@@ -28,7 +28,6 @@ public partial class TextInputWindow : Window
     private readonly CompanionSession _session;
     private readonly Action           _onClose;
     private string  _previousText = string.Empty;
-    private bool    _suppressChange;
 
     public TextInputWindow(CompanionSession session, Action onClose)
     {
@@ -42,7 +41,6 @@ public partial class TextInputWindow : Window
 
     private void OnTextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_suppressChange) return;
         var current = InputBox.Text ?? string.Empty;
         // Toggle placeholder visibility.
         PlaceholderText.Visibility = current.Length == 0

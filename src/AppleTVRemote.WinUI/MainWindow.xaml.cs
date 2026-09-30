@@ -624,7 +624,10 @@ public sealed partial class MainWindow : WindowEx
             _textInput     = new TextInputWindowManager(
                 _session,
                 resolvePopup: () => this,
-                dismissPopup: () => DispatcherQueue?.TryEnqueue(this.Hide));
+                // WindowEx.Hide() returns bool, so it can't be passed as a
+                // method-group to TryEnqueue (which wants Action) — wrap
+                // in a discard lambda.
+                dismissPopup: () => DispatcherQueue?.TryEnqueue(() => this.Hide()));
 
             // Run the Companion session-init handshake.
             // The v0.1.20–22 failures were the pair-verify M4 race (fixed in

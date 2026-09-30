@@ -20,7 +20,6 @@ public sealed partial class TextInputWindow : WindowEx
     private readonly CompanionSession _session;
     private readonly Action           _onClose;
     private string _previousText = string.Empty;
-    private bool   _suppressChange;
 
     public TextInputWindow(CompanionSession session, Action onClose)
     {
@@ -54,7 +53,6 @@ public sealed partial class TextInputWindow : WindowEx
 
     private void OnTextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_suppressChange) return;
         var current = InputBox.Text ?? string.Empty;
         var old = _previousText;
         _previousText = current;
