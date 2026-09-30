@@ -152,43 +152,17 @@ public sealed partial class MainWindow : WindowEx
 
     private void ApplyBorderlessPresenter()
     {
-        // OverlappedPresenter.CreateForContextMenu() is WinUI 3's
-        // canonical borderless popup preset (HasBorder=false,
-        // HasTitleBar=false, IsAlwaysOnTop=true, non-resizable). We
-        // start from it but immediately reinforce with the direct
-        // Win32 strip below — CreateForContextMenu alone left an
-        // OS-drawn frame on some Win11 builds.
-        AppWindow.SetPresenter(OverlappedPresenter.CreateForContextMenu());
-
-        // Menu-bar-style app: hide from the taskbar and from Alt-Tab.
-        // Without this the popup keeps a taskbar entry the whole time
-        // it's open, which competes with the tray icon and confuses
-        // users into thinking it's a regular window.
-        try { AppWindow.IsShownInSwitchers = false; } catch { }
-
-        // Belt-and-braces border removal, straight from the WinUI3AppBar
-        // reference (StripFrameStyles + SWP_FRAMECHANGED). Strips the
-        // window styles that DWM uses to decide whether to composite a
-        // frame at all. WS_CAPTION covers WS_BORDER|WS_DLGFRAME;
-        // WS_THICKFRAME is the sizing edge. Then SWP_FRAMECHANGED forces
-        // the OS to recompute the non-client area with the new styles.
-        try
-        {
-            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-            long style = NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GWL_STYLE).ToInt64();
-            style &= ~((long)(NativeMethods.WS_CAPTION | NativeMethods.WS_THICKFRAME));
-            NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GWL_STYLE, (IntPtr)style);
-            NativeMethods.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
-                NativeMethods.SWP_FRAMECHANGED
-                | NativeMethods.SWP_NOMOVE
-                | NativeMethods.SWP_NOSIZE
-                | NativeMethods.SWP_NOZORDER
-                | NativeMethods.SWP_NOACTIVATE);
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"StripFrameStyles failed: {ex}");
-        }
+        // Deliberately NOT calling AppWindow.SetPresenter here.
+        // Doing so replaces the WindowEx-managed OverlappedPresenter
+        // with a fresh instance, disconnecting WindowEx's own hooks
+        // (which is how IsAlwaysOnTop / IsShownInSwitchers / IsResizable
+        // etc. — all set in XAML on <winuiex:WindowEx> — actually take
+        // effect). WinUI3AppBar demonstrates this: it configures those
+        // properties in XAML and never touches SetPresenter.
+        //
+        // The frame-strip below is what makes the window borderless.
+        // Style removal + SWP_FRAMECHANGED is enough; no presenter
+        // swap needed.
         // Force DWM to use its largest rounded-corner preference (~8 px).
         // SetWindowRgn was tried for a bigger 22 px radius, but it fought
         // with the system-drawn border and left a white frame behind —
