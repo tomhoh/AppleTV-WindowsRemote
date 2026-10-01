@@ -83,6 +83,23 @@ public sealed partial class MainWindow : WindowEx
 
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
+        // Pre-warm the Composition Translation infrastructure for the
+        // LauncherPanel. The FIRST call to SetIsTranslationEnabled +
+        // GetElementVisual initializes the composition pipeline for
+        // that element — on an idle UI thread (now) that's cheap, but
+        // doing it during the first slide animation stalls the frame.
+        // Deferred to after the ctor returns so the visual tree is
+        // fully realized first.
+        _dispatcher.TryEnqueue(() =>
+        {
+            try
+            {
+                ElementCompositionPreview.SetIsTranslationEnabled(LauncherPanel, true);
+                _ = ElementCompositionPreview.GetElementVisual(LauncherPanel);
+            }
+            catch { /* best-effort — if this fails the first slide may be jerky */ }
+        });
+
         // UISettings.ColorValuesChanged is the canonical signal for the
         // user toggling system light/dark — fires off the UI thread, so
         // marshal back via the dispatcher.
@@ -905,7 +922,17 @@ public sealed partial class MainWindow : WindowEx
         if (session is null) return;
 
         OpenLauncher();
-        if (_cachedApps is null) await FetchAppsAsync(session);
+        if (_cachedApps is null)
+        {
+            // Defer the first fetch until after the slide completes.
+            // The initial tile-grid population does enough UI-thread
+            // work (tile creation, icon loads, layout passes) to stall
+            // the Composition slide animation on the first open.
+            // Subsequent opens hit the _cachedApps fast path with no
+            // fetch, which is why only the first slide was jerky.
+            await Task.Delay(LauncherAnimDuration + TimeSpan.FromMilliseconds(80));
+            if (_launcherOpen) await FetchAppsAsync(session);
+        }
     }
 
     private async void OnLauncherRefreshClicked(object sender, RoutedEventArgs e)
@@ -927,48 +954,135 @@ public sealed partial class MainWindow : WindowEx
     private void OpenLauncher()
     {
         _launcherOpen = true;
-        // Snap the window to its open size in ONE step — per-frame
-        // AppWindow.MoveAndResize is brutally jerky on the desktop
-        // compositor for popup-style windows.
-        var size = AppWindow.Size;
-        var pos  = AppWindow.Position;
-        double scale = Width > 0 ? size.Width / Width : 1.0;
-        int colPx = (int)Math.Round(LauncherPanelWidth * scale);
-        AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(pos.X - colPx, pos.Y, size.Width + colPx, size.Height));
-        LauncherCol.Width = new GridLength(LauncherPanelWidth);
-
         LauncherPanel.Visibility = Visibility.Visible;
-        // Start with the panel translated one panel-width to the RIGHT
-        // — that puts it in the same screen region the remote occupies.
-        // Because the remote's Grid.Column="1" is declared AFTER the
-        // launcher's Column="0", XAML draws it on top, hiding the
-        // launcher completely. Animating back to X=0 makes the launcher
-        // slide out FROM BEHIND the remote toward the left, instead of
-        // popping into an empty column and sliding in from the far
-        // left edge (which was the v0.4.1 visual).
-        SetLauncherTranslation(LauncherPanelWidth);
-        AnimateSlide(0);
+        // Panel sits naturally at col-left (no composition translation).
+        // The per-frame window+column grow does the slide: as the window
+        // extends leftward and col 0 widens, the launcher content —
+        // which starts entirely under the remote at col 0 width=0 —
+        // emerges from behind the remote's left edge icon-by-icon,
+        // in lockstep with the window frame. This is the macOS-style
+        // "sidebar expand" sync the user asked for.
+        SetLauncherTranslation(0);
+        AnimateWindowAndColumn(opening: true);
     }
 
     private void CloseLauncher()
     {
         _launcherOpen = false;
-        // Reverse direction: slide the launcher back behind the remote
-        // (X=+LauncherPanelWidth) before we snap the window shut. Matches
-        // the open-direction reversal above.
-        AnimateSlide(LauncherPanelWidth, onCompleted: () =>
+        AnimateWindowAndColumn(opening: false, onComplete: () =>
         {
             LauncherPanel.Visibility = Visibility.Collapsed;
-            LauncherCol.Width = new GridLength(0);
-            SetLauncherTranslation(0);
-
-            // Snap window back to remote-only.
-            var size = AppWindow.Size;
-            var pos  = AppWindow.Position;
-            double scale = Width > 0 ? size.Width / Width : 1.0;
-            int colPx = (int)Math.Round(LauncherPanelWidth * scale);
-            AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(pos.X + colPx, pos.Y, size.Width - colPx, size.Height));
         });
+    }
+
+    // ─── Synced window+column animation ───────────────────────────
+    //
+    // Drives AppWindow.MoveAndResize + LauncherCol.Width together on a
+    // DispatcherQueueTimer at ~60Hz so the window frame itself appears
+    // to slide out in sync with the launcher content. Combined with the
+    // panel being left-anchored (no translation), each icon slides out
+    // from behind the remote as the window edge sweeps leftward past
+    // its screen column. The symmetric close reverses it: icons slide
+    // back under the remote as the window shrinks.
+    //
+    // Note: per-frame window resizes on Win11 DWM aren't as fluid as
+    // Composition animations, but they are the only way to animate the
+    // actual window frame, and modern DWM handles ~60Hz window moves on
+    // popup-sized windows well enough that the sync visually reads as a
+    // single coordinated motion.
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _winAnimTimer;
+    private System.Diagnostics.Stopwatch? _winAnimClock;
+
+    private void AnimateWindowAndColumn(bool opening, Action? onComplete = null)
+    {
+        _winAnimTimer?.Stop();
+
+        var startSize = AppWindow.Size;
+        var startPos  = AppWindow.Position;
+        double scale  = Width > 0 ? startSize.Width / Width : 1.0;
+        int    colPx  = (int)Math.Round(LauncherPanelWidth * scale);
+
+        int baseX = startPos.X;
+        int baseW = startSize.Width;
+        int targetX = opening ? baseX - colPx : baseX + colPx;
+        int targetW = opening ? baseW + colPx : baseW - colPx;
+        double baseCol   = opening ? 0 : LauncherPanelWidth;
+        double targetCol = opening ? LauncherPanelWidth : 0;
+        int    y         = startPos.Y;
+        int    h         = startSize.Height;
+
+        // Set the starting column width immediately so the grid lays
+        // out correctly from the first frame.
+        LauncherCol.Width = new GridLength(baseCol);
+        AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(baseX, y, baseW, h));
+
+        _winAnimClock = System.Diagnostics.Stopwatch.StartNew();
+        _winAnimTimer = _dispatcher!.CreateTimer();
+        _winAnimTimer.Interval = TimeSpan.FromMilliseconds(16); // ~60Hz
+        _winAnimTimer.IsRepeating = true;
+
+        _winAnimTimer.Tick += (timer, _) =>
+        {
+            double tLin = Math.Min(1.0,
+                _winAnimClock!.Elapsed.TotalMilliseconds / LauncherAnimDuration.TotalMilliseconds);
+            double tEased = EaseStandard(tLin); // matches AnimateSlide bezier (0.4,0,0.2,1)
+
+            int currX = (int)Math.Round(Lerp(baseX, targetX, tEased));
+            int currW = (int)Math.Round(Lerp(baseW, targetW, tEased));
+            double currCol = Lerp(baseCol, targetCol, tEased);
+
+            AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(currX, y, currW, h));
+            LauncherCol.Width = new GridLength(currCol);
+
+            if (tLin >= 1.0)
+            {
+                timer.Stop();
+                // Snap to exact target to defeat Int rounding drift.
+                AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(targetX, y, targetW, h));
+                LauncherCol.Width = new GridLength(targetCol);
+                onComplete?.Invoke();
+            }
+        };
+        _winAnimTimer.Start();
+    }
+
+    private static double Lerp(double a, double b, double t) => a + (b - a) * t;
+
+    /// <summary>
+    /// Cubic-bezier (0.4, 0, 0.2, 1) — Material "standard easing".
+    /// Matches the easing used by the launcher's Composition slide
+    /// animation so the window + content ease identically.
+    /// Solved via Newton's method on the parametric X-of-t curve.
+    /// </summary>
+    private static double EaseStandard(double t)
+    {
+        if (t <= 0) return 0;
+        if (t >= 1) return 1;
+        const double p1x = 0.4, p1y = 0.0, p2x = 0.2, p2y = 1.0;
+        double u = t;
+        for (int i = 0; i < 6; i++)
+        {
+            double x = CubicBezier(u, p1x, p2x) - t;
+            double dx = CubicBezierDerivative(u, p1x, p2x);
+            if (Math.Abs(dx) < 1e-6) break;
+            u -= x / dx;
+            if (u < 0) u = 0;
+            else if (u > 1) u = 1;
+        }
+        return CubicBezier(u, p1y, p2y);
+    }
+
+    private static double CubicBezier(double t, double p1, double p2)
+    {
+        double it = 1 - t;
+        return 3 * it * it * t * p1 + 3 * it * t * t * p2 + t * t * t;
+    }
+
+    private static double CubicBezierDerivative(double t, double p1, double p2)
+    {
+        double it = 1 - t;
+        return 3 * it * it * p1 + 6 * it * t * (p2 - p1) + 3 * t * t * (1 - p2);
     }
 
     /// <summary>
