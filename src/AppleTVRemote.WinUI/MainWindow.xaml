@@ -88,23 +88,27 @@
             </StackPanel>
         </Border>
 
-        <Grid Grid.Row="1">
+        <!-- Right-anchored with FIXED total width = launcher + remote
+             (320 + 168 = 488). This is the key to keeping the remote
+             rock-still during the open/close animation: the remote is
+             the rightmost 168 of this block, so its screen X = window.right
+             - 168, and window.right is held constant by MoveAndResize
+             (we only move the LEFT edge). Previously LauncherCol.Width
+             animated 0→320 in sync with the window move, which raced
+             the DWM window-position update by a frame and caused the
+             remote to blip rightward each tick. Now LauncherCol is
+             a permanent 320 and only AppWindow is animated — the
+             launcher reveals purely from window-left-edge clipping,
+             which the compositor paints atomically with the frame. -->
+        <Grid Grid.Row="1" HorizontalAlignment="Right" Width="488">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition x:Name="LauncherCol" Width="0" />
-            <!-- `*` (not fixed 168) so the column fills whatever the
-                 client area actually is — with hasBorder:true the OS
-                 frame consumes some of the outer 168pt window width,
-                 and a hardcoded 168 overflows to the right. -->
-            <ColumnDefinition Width="*" />
+            <ColumnDefinition x:Name="LauncherCol" Width="320" />
+            <ColumnDefinition Width="168" />
         </Grid.ColumnDefinitions>
 
-        <!-- ── Column 0: app launcher (slides out left) ──
-             No RenderTransform: the slide-in/out is driven by a
-             Composition animation on the visual's `Translation`
-             property (see AnimateSlide in code-behind), which runs on
-             the compositor thread. A DoubleAnimation on a
-             TranslateTransform.X had to be a dependent animation and
-             was UI-thread-bound, which is what made the slide jerky. -->
+        <!-- ── Column 0: app launcher (revealed by window-left-edge
+             clipping as AppWindow.MoveAndResize extends the window
+             leftward; see AnimateWindow in code-behind). -->
         <Grid x:Name="LauncherPanel"
               Grid.Column="0"
               Visibility="Collapsed">

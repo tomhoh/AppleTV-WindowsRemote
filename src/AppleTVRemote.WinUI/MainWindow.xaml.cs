@@ -83,23 +83,6 @@ public sealed partial class MainWindow : WindowEx
 
         _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
-        // Pre-warm the Composition Translation infrastructure for the
-        // LauncherPanel. The FIRST call to SetIsTranslationEnabled +
-        // GetElementVisual initializes the composition pipeline for
-        // that element — on an idle UI thread (now) that's cheap, but
-        // doing it during the first slide animation stalls the frame.
-        // Deferred to after the ctor returns so the visual tree is
-        // fully realized first.
-        _dispatcher.TryEnqueue(() =>
-        {
-            try
-            {
-                ElementCompositionPreview.SetIsTranslationEnabled(LauncherPanel, true);
-                _ = ElementCompositionPreview.GetElementVisual(LauncherPanel);
-            }
-            catch { /* best-effort — if this fails the first slide may be jerky */ }
-        });
-
         // UISettings.ColorValuesChanged is the canonical signal for the
         // user toggling system light/dark — fires off the UI thread, so
         // marshal back via the dispatcher.
@@ -924,12 +907,13 @@ public sealed partial class MainWindow : WindowEx
         OpenLauncher();
         if (_cachedApps is null)
         {
-            // Defer the first fetch until after the slide completes.
-            // The initial tile-grid population does enough UI-thread
-            // work (tile creation, icon loads, layout passes) to stall
-            // the Composition slide animation on the first open.
-            // Subsequent opens hit the _cachedApps fast path with no
-            // fetch, which is why only the first slide was jerky.
+            // Defer the first fetch until after the window animation
+            // completes. The initial tile-grid population does enough
+            // UI-thread work (tile creation, icon loads, layout
+            // passes) to stall the per-frame MoveAndResize ticks on
+            // the first open. Subsequent opens hit the _cachedApps
+            // fast path with no fetch, which is why only the first
+            // slide was jerky.
             await Task.Delay(LauncherAnimDuration + TimeSpan.FromMilliseconds(80));
             if (_launcherOpen) await FetchAppsAsync(session);
         }
@@ -955,46 +939,42 @@ public sealed partial class MainWindow : WindowEx
     {
         _launcherOpen = true;
         LauncherPanel.Visibility = Visibility.Visible;
-        // Panel sits naturally at col-left (no composition translation).
-        // The per-frame window+column grow does the slide: as the window
-        // extends leftward and col 0 widens, the launcher content —
-        // which starts entirely under the remote at col 0 width=0 —
-        // emerges from behind the remote's left edge icon-by-icon,
-        // in lockstep with the window frame. This is the macOS-style
-        // "sidebar expand" sync the user asked for.
-        SetLauncherTranslation(0);
-        AnimateWindowAndColumn(opening: true);
+        AnimateWindow(opening: true);
     }
 
     private void CloseLauncher()
     {
         _launcherOpen = false;
-        AnimateWindowAndColumn(opening: false, onComplete: () =>
+        AnimateWindow(opening: false, onComplete: () =>
         {
             LauncherPanel.Visibility = Visibility.Collapsed;
         });
     }
 
-    // ─── Synced window+column animation ───────────────────────────
+    // ─── Window-only animation ────────────────────────────────────
     //
-    // Drives AppWindow.MoveAndResize + LauncherCol.Width together on a
-    // DispatcherQueueTimer at ~60Hz so the window frame itself appears
-    // to slide out in sync with the launcher content. Combined with the
-    // panel being left-anchored (no translation), each icon slides out
-    // from behind the remote as the window edge sweeps leftward past
-    // its screen column. The symmetric close reverses it: icons slide
-    // back under the remote as the window shrinks.
+    // Only AppWindow.MoveAndResize is animated. The launcher+remote
+    // Grid in XAML is HorizontalAlignment=Right with a fixed total
+    // width of 488 (= 320 launcher + 168 remote), so the remote
+    // occupies the rightmost 168 of that block and sits at screen X
+    // = window.right - 168 regardless of window width. Because our
+    // move-and-resize keeps window.right fixed (we extend only the
+    // left edge), the remote is pinned to a FIXED screen X for the
+    // whole animation — no DWM-move/layout race, no rightward blip.
+    // The launcher reveals purely from window-left-edge clipping,
+    // which the compositor paints atomically with each frame of the
+    // window move.
     //
-    // Note: per-frame window resizes on Win11 DWM aren't as fluid as
-    // Composition animations, but they are the only way to animate the
-    // actual window frame, and modern DWM handles ~60Hz window moves on
-    // popup-sized windows well enough that the sync visually reads as a
-    // single coordinated motion.
+    // Prior version animated LauncherCol.Width = 0 → 320 in sync with
+    // MoveAndResize. The col width change applied via XAML layout
+    // immediately on the UI thread, while MoveAndResize went async
+    // through DWM — so each tick the remote visually shifted right by
+    // the per-tick col-width delta until DWM caught up next frame.
 
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _winAnimTimer;
     private System.Diagnostics.Stopwatch? _winAnimClock;
 
-    private void AnimateWindowAndColumn(bool opening, Action? onComplete = null)
+    private void AnimateWindow(bool opening, Action? onComplete = null)
     {
         _winAnimTimer?.Stop();
 
@@ -1003,19 +983,12 @@ public sealed partial class MainWindow : WindowEx
         double scale  = Width > 0 ? startSize.Width / Width : 1.0;
         int    colPx  = (int)Math.Round(LauncherPanelWidth * scale);
 
-        int baseX = startPos.X;
-        int baseW = startSize.Width;
+        int baseX   = startPos.X;
+        int baseW   = startSize.Width;
         int targetX = opening ? baseX - colPx : baseX + colPx;
         int targetW = opening ? baseW + colPx : baseW - colPx;
-        double baseCol   = opening ? 0 : LauncherPanelWidth;
-        double targetCol = opening ? LauncherPanelWidth : 0;
-        int    y         = startPos.Y;
-        int    h         = startSize.Height;
-
-        // Set the starting column width immediately so the grid lays
-        // out correctly from the first frame.
-        LauncherCol.Width = new GridLength(baseCol);
-        AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(baseX, y, baseW, h));
+        int y       = startPos.Y;
+        int h       = startSize.Height;
 
         _winAnimClock = System.Diagnostics.Stopwatch.StartNew();
         _winAnimTimer = _dispatcher!.CreateTimer();
@@ -1026,21 +999,18 @@ public sealed partial class MainWindow : WindowEx
         {
             double tLin = Math.Min(1.0,
                 _winAnimClock!.Elapsed.TotalMilliseconds / LauncherAnimDuration.TotalMilliseconds);
-            double tEased = EaseStandard(tLin); // matches AnimateSlide bezier (0.4,0,0.2,1)
+            double tEased = EaseStandard(tLin); // Material standard (0.4, 0, 0.2, 1)
 
             int currX = (int)Math.Round(Lerp(baseX, targetX, tEased));
             int currW = (int)Math.Round(Lerp(baseW, targetW, tEased));
-            double currCol = Lerp(baseCol, targetCol, tEased);
 
             AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(currX, y, currW, h));
-            LauncherCol.Width = new GridLength(currCol);
 
             if (tLin >= 1.0)
             {
                 timer.Stop();
-                // Snap to exact target to defeat Int rounding drift.
+                // Snap to exact target to defeat int rounding drift.
                 AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(targetX, y, targetW, h));
-                LauncherCol.Width = new GridLength(targetCol);
                 onComplete?.Invoke();
             }
         };
@@ -1051,9 +1021,8 @@ public sealed partial class MainWindow : WindowEx
 
     /// <summary>
     /// Cubic-bezier (0.4, 0, 0.2, 1) — Material "standard easing".
-    /// Matches the easing used by the launcher's Composition slide
-    /// animation so the window + content ease identically.
-    /// Solved via Newton's method on the parametric X-of-t curve.
+    /// Drives the window-frame interpolation. Solved via Newton's
+    /// method on the parametric X-of-t curve.
     /// </summary>
     private static double EaseStandard(double t)
     {
@@ -1083,55 +1052,6 @@ public sealed partial class MainWindow : WindowEx
     {
         double it = 1 - t;
         return 3 * it * it * p1 + 6 * it * t * (p2 - p1) + 3 * t * t * (1 - p2);
-    }
-
-    /// <summary>
-    /// Set the LauncherPanel visual's Translation immediately (no
-    /// animation). Used to pre-position the panel off-screen before
-    /// sliding it in, and to reset after the close animation.
-    /// </summary>
-    private void SetLauncherTranslation(double x)
-    {
-        ElementCompositionPreview.SetIsTranslationEnabled(LauncherPanel, true);
-        var visual = ElementCompositionPreview.GetElementVisual(LauncherPanel);
-        visual.Properties.InsertVector3("Translation",
-            new System.Numerics.Vector3((float)x, 0, 0));
-    }
-
-    /// <summary>
-    /// Slide the launcher panel via a Composition animation on the
-    /// visual's Translation property. This runs on the compositor
-    /// thread — the previous DoubleAnimation on RenderTransform.X was
-    /// a dependent animation running UI-thread-bound, which produced
-    /// the jerky slide the user reported. Composition animations are
-    /// GPU-accelerated and immune to UI-thread contention.
-    /// </summary>
-    private void AnimateSlide(double targetX, Action? onCompleted = null)
-    {
-        ElementCompositionPreview.SetIsTranslationEnabled(LauncherPanel, true);
-        var visual = ElementCompositionPreview.GetElementVisual(LauncherPanel);
-        var compositor = visual.Compositor;
-
-        // Cubic-bezier equivalent of Material Design's "standard easing"
-        // curve — starts moving gently, decelerates smoothly, no snap
-        // at either end. Softer than the previous ease-out-quart at
-        // this longer 320ms duration.
-        var easing = compositor.CreateCubicBezierEasingFunction(
-            new System.Numerics.Vector2(0.4f, 0f),
-            new System.Numerics.Vector2(0.2f, 1f));
-
-        var anim = compositor.CreateVector3KeyFrameAnimation();
-        anim.Duration = LauncherAnimDuration;
-        anim.Target   = "Translation";
-        anim.InsertKeyFrame(1f,
-            new System.Numerics.Vector3((float)targetX, 0, 0),
-            easing);
-
-        var batch = compositor.CreateScopedBatch(CompositionBatchTypes.Animation);
-        visual.StartAnimation("Translation", anim);
-        batch.End();
-        if (onCompleted is not null)
-            batch.Completed += (_, _) => onCompleted();
     }
 
     private async Task FetchAppsAsync(CompanionSession session)
