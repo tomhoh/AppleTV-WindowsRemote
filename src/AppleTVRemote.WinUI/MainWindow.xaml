@@ -216,6 +216,7 @@
                 VerticalContentAlignment="Center"
                 Background="Transparent"
                 BorderBrush="Transparent"
+                UseSystemFocusVisuals="False"
                 Content="Select Apple TV…"
                 Visibility="Collapsed">
             <!-- ThemeDictionaries + ButtonBackground* overrides didn't
@@ -243,14 +244,27 @@
             </Button.Resources>
             <Button.Template>
                 <ControlTemplate TargetType="Button">
+                    <!-- Background hardcoded Transparent (not
+                         TemplateBinding) so Normal state is DEFINITELY
+                         transparent regardless of what the default
+                         Button Style's Background setter resolves to.
+                         VisualStates for PointerOver / Pressed swap
+                         it. Normal explicitly re-sets Transparent so
+                         VSM reliably reverts after a hover exit on
+                         every WinUI build. -->
                     <Grid x:Name="ButtonSurface"
-                          Background="{TemplateBinding Background}"
-                          BorderBrush="{TemplateBinding BorderBrush}"
-                          BorderThickness="{TemplateBinding BorderThickness}"
+                          Background="Transparent"
+                          BorderBrush="Transparent"
+                          BorderThickness="0"
                           CornerRadius="{TemplateBinding CornerRadius}">
                         <VisualStateManager.VisualStateGroups>
                             <VisualStateGroup x:Name="CommonStates">
-                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="Normal">
+                                    <VisualState.Setters>
+                                        <Setter Target="ButtonSurface.Background"
+                                                Value="Transparent" />
+                                    </VisualState.Setters>
+                                </VisualState>
                                 <VisualState x:Name="PointerOver">
                                     <VisualState.Setters>
                                         <Setter Target="ButtonSurface.Background"
@@ -263,7 +277,12 @@
                                                 Value="{ThemeResource DeviceButtonPressedFill}" />
                                     </VisualState.Setters>
                                 </VisualState>
-                                <VisualState x:Name="Disabled" />
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="ButtonSurface.Background"
+                                                Value="Transparent" />
+                                    </VisualState.Setters>
+                                </VisualState>
                             </VisualStateGroup>
                         </VisualStateManager.VisualStateGroups>
                         <ContentPresenter
