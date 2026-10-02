@@ -657,18 +657,46 @@ public sealed partial class MainWindow : WindowEx
 
     // Power is a toggle, not a single wake. The Companion protocol
     // exposes Sleep and Wake as distinct keycodes (not a toggle), so we
-    // alternate ourselves. _hasSentSleep flips on each press and is
-    // reset to false (assume awake) every time a fresh session is
-    // established — you can't be connected to a sleeping Apple TV, so
-    // "just connected" implies awake. Mirrors RemoteSession.dispatchPower
-    // in the Swift port.
+    // alternate ourselves. _hasSentSleep flips on each press and resets
+    // to false (assume awake) only on a successful fresh connect —
+    // sleeping Apple TVs aren't connectable, so a new session implies
+    // awake. Mirrors RemoteSession.dispatchPower in the Swift port.
+    //
+    // Wake-after-Sleep caveat: the TV tears down the companion socket
+    // ~1 s after accepting Sleep. The HID Wake keycode can only be
+    // sent over a live socket, so if the user waits past that window
+    // the next press would fail to reconnect to a sleeping TV. For
+    // that case we fall back to Wake-on-LAN (see WakeOnLan.SendAsync),
+    // matching how the Swift sibling's MACStore+WoL path handles it.
     private bool _hasSentSleep;
 
     private async void OnPowerClicked(object sender, RoutedEventArgs e)
     {
-        var cmd = _hasSentSleep ? HidCommand.Wake : HidCommand.Sleep;
-        _hasSentSleep = !_hasSentSleep;
-        await DispatchAsync(cmd);
+        if (_hasSentSleep)
+        {
+            _hasSentSleep = false;
+            // Prefer HID Wake if the socket is still alive (fast path:
+            // user double-tapped power before Sleep tore the connection
+            // down). Otherwise send a WoL magic packet — HID can't
+            // reach a sleeping TV.
+            if (_session is not null)
+            {
+                await DispatchAsync(HidCommand.Wake);
+            }
+            else if (_selectedDevice?.Host is { Length: > 0 } host)
+            {
+                var sent = await AppleTVProtocol.WakeOnLan.SendAsync(host);
+                if (!sent)
+                    await ShowMessageAsync(
+                        "Couldn't wake the Apple TV — no cached MAC address.\n" +
+                        "Reconnect while the TV is awake, then try again.");
+            }
+        }
+        else
+        {
+            _hasSentSleep = true;
+            await DispatchAsync(HidCommand.Sleep);
+        }
     }
 
     // Home: tap → home screen, hold → tvOS app-switcher. A DispatcherQueueTimer
@@ -809,7 +837,12 @@ public sealed partial class MainWindow : WindowEx
                 _session   = null;
                 _conn      = null;
                 _activeDevice = null;
-                _hasSentSleep = false; // next session starts assuming awake
+                // Note: do NOT reset _hasSentSleep here. Sending Sleep
+                // causes the TV to drop the socket shortly after, which
+                // fires Closed — if we reset here, the next press
+                // dispatches Sleep again instead of Wake, so Wake is
+                // never attempted. Only a successful fresh connect
+                // (below) resets the toggle to "awake".
                 if (ti is not null)
                     DispatcherQueue?.TryEnqueue(() => { try { ti.Dispose(); } catch { } });
             };
