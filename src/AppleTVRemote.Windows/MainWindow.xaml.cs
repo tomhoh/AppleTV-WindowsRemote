@@ -442,7 +442,8 @@ public partial class MainWindow : Window
             {
                 await DispatchAsync(HidCommand.Wake);
             }
-            else if (_selectedDevice?.Host is { Length: > 0 } host)
+            else if ((DeviceCombo.SelectedItem as StoredCredentials)?.Host
+                     is { Length: > 0 } host)
             {
                 var sent = await AppleTVProtocol.WakeOnLan.SendAsync(host);
                 if (!sent)
