@@ -8,6 +8,7 @@
 // a popup near the cursor.
 
 using System;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using AppleTVProtocol;
@@ -140,6 +141,7 @@ public partial class App : Application
         _popup!.PositionNearTray();
         _popup.Show();
         _popup.Activate();
+        ForceForeground(_popup);
         _popup.OpenPairing();
     }
 
@@ -157,6 +159,7 @@ public partial class App : Application
         _popup.PositionNearTray();
         _popup.Show();
         _popup.Activate();
+        ForceForeground(_popup);
         _ = _popup.ConnectSelectedAsync();
     }
 
@@ -196,8 +199,52 @@ public partial class App : Application
             _popup.PositionNearTray();
             _popup.Show();
             _popup.Activate();
+            ForceForeground(_popup);
         }
     }
+
+    /// <summary>
+    /// Force keyboard focus onto <paramref name="window"/> and bring
+    /// it to the foreground. Window.Activate() alone isn't a reliable
+    /// focus-steal on Win11 — in particular, when the user launches
+    /// us from the shell's taskbar-overflow flyout (the "^" chevron),
+    /// Activate() shows the window but leaves the shell's flyout as
+    /// foreground, so the flyout stays on screen until the user clicks
+    /// us. SetForegroundWindow is normally blocked for processes that
+    /// aren't the current foreground, so we temporarily attach our
+    /// thread's input queue to the foreground thread's — the classic
+    /// Win32 workaround.
+    /// </summary>
+    private static void ForceForeground(System.Windows.Window window)
+    {
+        try
+        {
+            var hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+            if (hwnd == IntPtr.Zero) return;
+            var fg = GetForegroundWindow();
+            if (fg == hwnd) return;
+            uint fgTid = GetWindowThreadProcessId(fg, out _);
+            uint myTid = GetCurrentThreadId();
+            bool attached = false;
+            try
+            {
+                if (fgTid != 0 && fgTid != myTid)
+                    attached = AttachThreadInput(fgTid, myTid, true);
+                SetForegroundWindow(hwnd);
+            }
+            finally
+            {
+                if (attached) AttachThreadInput(fgTid, myTid, false);
+            }
+        }
+        catch { /* best-effort */ }
+    }
+
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 }
 
 internal static class MenuItemExtensions

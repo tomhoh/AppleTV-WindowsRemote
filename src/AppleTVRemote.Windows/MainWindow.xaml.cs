@@ -427,15 +427,37 @@ public partial class MainWindow : Window
 
     // Power is a toggle. Companion exposes Sleep and Wake as distinct
     // keycodes, so we alternate ourselves. Reset to false (assume
-    // awake) on every fresh connect because sleeping Apple TVs aren't
-    // connectable. Mirrors RemoteSession.dispatchPower in the Swift port.
+    // awake) only on a successful fresh connect — sleeping Apple TVs
+    // aren't connectable. Wake-after-Sleep falls back to WoL because
+    // the TV drops the socket ~1 s after accepting Sleep. Mirrors
+    // RemoteSession.dispatchPower + MACStore in the Swift port.
     private bool _hasSentSleep;
 
     private async void OnPowerClicked(object sender, RoutedEventArgs e)
     {
-        var cmd = _hasSentSleep ? HidCommand.Wake : HidCommand.Sleep;
-        _hasSentSleep = !_hasSentSleep;
-        await DispatchAsync(cmd);
+        if (_hasSentSleep)
+        {
+            _hasSentSleep = false;
+            if (_session is not null)
+            {
+                await DispatchAsync(HidCommand.Wake);
+            }
+            else if (_selectedDevice?.Host is { Length: > 0 } host)
+            {
+                var sent = await AppleTVProtocol.WakeOnLan.SendAsync(host);
+                if (!sent)
+                    MessageBox.Show(
+                        "Couldn't wake the Apple TV — no cached MAC address.\n" +
+                        "Reconnect while the TV is awake, then try again.",
+                        "Apple TV Remote",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+        else
+        {
+            _hasSentSleep = true;
+            await DispatchAsync(HidCommand.Sleep);
+        }
     }
 
     // Home: tap → home screen, hold → tvOS app-switcher. A DispatcherTimer
@@ -575,7 +597,12 @@ public partial class MainWindow : Window
                 _session   = null;
                 _conn      = null;
                 _activeDevice = null;
-                _hasSentSleep = false; // next session starts assuming awake
+                // Note: do NOT reset _hasSentSleep here. Sending Sleep
+                // causes the TV to drop the socket shortly after, which
+                // fires Closed — if we reset here, the next press
+                // dispatches Sleep again instead of Wake, so Wake is
+                // never attempted. Only a successful fresh connect
+                // (below) resets the toggle to "awake".
                 if (ti is not null)
                     Dispatcher.BeginInvoke(new Action(() => { try { ti.Dispose(); } catch { } }));
             };

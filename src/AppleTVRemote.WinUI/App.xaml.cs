@@ -12,6 +12,7 @@
 
 using System;
 using System.Linq;
+using System.Runtime.InteropServices;
 using AppleTVProtocol;
 using H.NotifyIcon;
 using Microsoft.UI.Xaml;
@@ -131,6 +132,7 @@ public partial class App : Application
                 _popup.Closed += (_, _) => _popup = null;
             }
             _popup.OpenPairing();
+            ForceForeground(_popup);
         });
         flyout.Items.Add(pairItem);
 
@@ -165,6 +167,7 @@ public partial class App : Application
         _popup.SelectStoredDevice(deviceId);
         _popup.PositionNearTray();
         _popup.Activate();
+        ForceForeground(_popup);
         // Fire pair-verify + session-init immediately so the user doesn't
         // need to press a remote button before the switch takes effect.
         // MainWindow.EnsureSessionAsync surfaces its own error dialogs.
@@ -181,6 +184,49 @@ public partial class App : Application
         catch { /* best-effort — Hide can throw if the flyout is mid-close */ }
     }
 
+    /// <summary>
+    /// Force keyboard focus onto <paramref name="window"/> and bring it
+    /// to the foreground. Window.Activate() alone isn't a reliable
+    /// focus-steal on Win11 — in particular, when the user launches
+    /// us from the shell's taskbar-overflow flyout (the "^" chevron),
+    /// Activate() shows the window but leaves the shell's flyout as
+    /// foreground, so the flyout stays on screen until the user clicks
+    /// us. SetForegroundWindow is normally blocked for processes that
+    /// aren't the current foreground, so we temporarily attach our
+    /// thread's input queue to the foreground thread's — the classic
+    /// Win32 workaround.
+    /// </summary>
+    private static void ForceForeground(Microsoft.UI.Xaml.Window window)
+    {
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+            if (hwnd == IntPtr.Zero) return;
+            var fg = GetForegroundWindow();
+            if (fg == hwnd) return;
+            uint fgTid = GetWindowThreadProcessId(fg, out _);
+            uint myTid = GetCurrentThreadId();
+            bool attached = false;
+            try
+            {
+                if (fgTid != 0 && fgTid != myTid)
+                    attached = AttachThreadInput(fgTid, myTid, true);
+                SetForegroundWindow(hwnd);
+            }
+            finally
+            {
+                if (attached) AttachThreadInput(fgTid, myTid, false);
+            }
+        }
+        catch { /* best-effort */ }
+    }
+
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
     private void TogglePopup()
     {
         if (_popup is null)
@@ -190,6 +236,7 @@ public partial class App : Application
         }
         _popup.PositionNearTray();      // anchor to tray-icon cursor location
         _popup.Activate();
+        ForceForeground(_popup);
     }
 
     private void ExitApp()
