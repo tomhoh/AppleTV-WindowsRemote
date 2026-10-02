@@ -209,11 +209,11 @@ public partial class App : Application
     /// focus-steal on Win11 — in particular, when the user launches
     /// us from the shell's taskbar-overflow flyout (the "^" chevron),
     /// Activate() shows the window but leaves the shell's flyout as
-    /// foreground, so the flyout stays on screen until the user clicks
-    /// us. SetForegroundWindow is normally blocked for processes that
-    /// aren't the current foreground, so we temporarily attach our
-    /// thread's input queue to the foreground thread's — the classic
-    /// Win32 workaround.
+    /// foreground, so the flyout stays on screen until the user
+    /// clicks us. Combined workaround: synthesize an ALT keypress
+    /// (counts as user input, bypasses Win11 focus-stealing
+    /// protection), attach our thread's input queue to the foreground
+    /// thread's, then BringWindowToTop + SetForegroundWindow.
     /// </summary>
     private static void ForceForeground(System.Windows.Window window)
     {
@@ -223,6 +223,9 @@ public partial class App : Application
             if (hwnd == IntPtr.Zero) return;
             var fg = GetForegroundWindow();
             if (fg == hwnd) return;
+
+            keybd_event(VK_MENU, 0, 0, UIntPtr.Zero); // ALT down
+
             uint fgTid = GetWindowThreadProcessId(fg, out _);
             uint myTid = GetCurrentThreadId();
             bool attached = false;
@@ -230,19 +233,29 @@ public partial class App : Application
             {
                 if (fgTid != 0 && fgTid != myTid)
                     attached = AttachThreadInput(fgTid, myTid, true);
+                ShowWindow(hwnd, SW_RESTORE);
+                BringWindowToTop(hwnd);
                 SetForegroundWindow(hwnd);
             }
             finally
             {
                 if (attached) AttachThreadInput(fgTid, myTid, false);
+                keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); // ALT up
             }
         }
         catch { /* best-effort */ }
     }
 
+    private const byte VK_MENU = 0x12;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const int SW_RESTORE = 9;
+
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 }

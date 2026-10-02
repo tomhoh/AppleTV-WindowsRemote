@@ -675,15 +675,13 @@ public sealed partial class MainWindow : WindowEx
         if (_hasSentSleep)
         {
             _hasSentSleep = false;
-            // Prefer HID Wake if the socket is still alive (fast path:
-            // user double-tapped power before Sleep tore the connection
-            // down). Otherwise send a WoL magic packet — HID can't
-            // reach a sleeping TV.
-            if (_session is not null)
-            {
-                await DispatchAsync(HidCommand.Wake);
-            }
-            else if (_selectedDevice?.Host is { Length: > 0 } host)
+            // Wake ALWAYS goes via WoL. HID Wake over the companion
+            // socket doesn't reliably wake a TV that's already
+            // processing Sleep (the TV's companion service is winding
+            // down), and the socket is usually dead by then anyway.
+            // The MAC was snapshotted into WakeOnLan's in-memory
+            // cache on the prior successful connect.
+            if (_selectedDevice?.Host is { Length: > 0 } host)
             {
                 var sent = await AppleTVProtocol.WakeOnLan.SendAsync(host);
                 if (!sent)
@@ -853,6 +851,10 @@ public sealed partial class MainWindow : WindowEx
             _session.NowPlayingUpdated += OnNowPlayingUpdated;
             _activeDevice  = selected;
             _hasSentSleep  = false; // fresh connect ⇒ TV is awake
+            // Snapshot the TV's MAC NOW, while the ARP entry is fresh.
+            // We rely on this for Wake-on-LAN after the TV sleeps —
+            // by then the ARP entry may have already expired.
+            _ = AppleTVProtocol.WakeOnLan.CacheMacForHostAsync(selected.Host);
 
             _textInput     = new TextInputWindowManager(
                 _session,
