@@ -59,7 +59,7 @@ public static class WakeOnLan
         {
             if (_cache.TryGetValue(host, out var cached))
             {
-                await SendMagicPacketAsync(cached).ConfigureAwait(false);
+                await SendMagicPacketAsync(cached, host).ConfigureAwait(false);
                 return true;
             }
             var ip = await ResolveIpv4Async(host).ConfigureAwait(false);
@@ -67,7 +67,7 @@ public static class WakeOnLan
             var mac = GetMacForIpv4(ip);
             if (mac is null) return false;
             _cache[host] = mac;
-            await SendMagicPacketAsync(mac).ConfigureAwait(false);
+            await SendMagicPacketAsync(mac, host).ConfigureAwait(false);
             return true;
         }
         catch
@@ -99,17 +99,76 @@ public static class WakeOnLan
         return allZero ? null : mac;
     }
 
-    private static async Task SendMagicPacketAsync(byte[] mac)
+    /// <summary>
+    /// Send the magic packet to three destinations, in order (matching
+    /// the Swift sibling's WakeOnLAN.send):
+    ///
+    ///   1. Directed broadcast on the primary IPv4 interface
+    ///      (e.g. 192.168.1.255) — preferred, no routing ambiguity.
+    ///   2. Limited broadcast (255.255.255.255) — belt-and-suspenders
+    ///      fallback; some routers drop this.
+    ///   3. Unicast to <paramref name="targetHost"/> — reaches the
+    ///      device when both broadcasts are blocked (relies on the
+    ///      switch's CAM table, which holds longer than ARP).
+    ///
+    /// Any one of these reaching the TV is enough to wake it.
+    /// </summary>
+    private static async Task SendMagicPacketAsync(byte[] mac, string targetHost)
     {
-        // Standard magic packet: 6 bytes of 0xFF + MAC repeated 16 times = 102 bytes.
         var packet = new byte[6 + 16 * 6];
         for (int i = 0; i < 6; i++) packet[i] = 0xFF;
         for (int i = 1; i <= 16; i++) Buffer.BlockCopy(mac, 0, packet, i * 6, 6);
+
+        var destinations = new System.Collections.Generic.List<IPAddress>();
+        foreach (var bcast in GetDirectedBroadcasts()) destinations.Add(bcast);
+        destinations.Add(IPAddress.Broadcast);                      // 255.255.255.255
+        if (IPAddress.TryParse(targetHost, out var unicast))
+            destinations.Add(unicast);
+
         using var udp = new UdpClient { EnableBroadcast = true };
-        // Port 9 is the conventional WoL port; port 7 is also common —
-        // apps typically send to one, routers forward both.
-        await udp.SendAsync(packet, packet.Length, new IPEndPoint(IPAddress.Broadcast, 9))
-                 .ConfigureAwait(false);
+        foreach (var dest in destinations)
+        {
+            try
+            {
+                await udp.SendAsync(packet, packet.Length, new IPEndPoint(dest, 9))
+                         .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Individual send-to failure is non-fatal: try the next
+                // destination. The sum of three attempts is far more
+                // reliable than any one.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Yield the directed-broadcast address for every "up" IPv4
+    /// interface on the machine — e.g. 192.168.1.255 for an adapter
+    /// in 192.168.1.0/24. Multiple adapters are possible on laptops
+    /// with Wi-Fi + Ethernet both plugged in; we send to all of them
+    /// because we don't know which one reaches the TV.
+    /// </summary>
+    private static System.Collections.Generic.IEnumerable<IPAddress> GetDirectedBroadcasts()
+    {
+        foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+            var props = nic.GetIPProperties();
+            foreach (var ua in props.UnicastAddresses)
+            {
+                if (ua.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                if (IPAddress.IsLoopback(ua.Address)) continue;
+                var mask = ua.IPv4Mask;
+                if (mask is null || mask.Equals(IPAddress.Any)) continue;
+                var ipBytes   = ua.Address.GetAddressBytes();
+                var maskBytes = mask.GetAddressBytes();
+                var bcast     = new byte[4];
+                for (int i = 0; i < 4; i++)
+                    bcast[i] = (byte)(ipBytes[i] | (byte)~maskBytes[i]);
+                yield return new IPAddress(bcast);
+            }
+        }
     }
 
     [DllImport("iphlpapi.dll", ExactSpelling = true)]
