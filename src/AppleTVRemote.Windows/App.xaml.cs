@@ -49,8 +49,31 @@ public partial class App : Application
         // cost upfront.
     }
 
-    private void OnTrayLeftClicked(object sender, RoutedEventArgs e)  => TogglePopup();
-    private void OnOpenClicked    (object sender, RoutedEventArgs e)  => TogglePopup();
+    private void OnTrayLeftClicked(object sender, RoutedEventArgs e)
+    {
+        // A context menu lingering from a prior right-click doesn't
+        // light-dismiss when the user left-clicks the tray icon
+        // (Hardcodet.NotifyIcon treats the icon area as part of its
+        // own popup chrome), so it stays on screen until the user
+        // interacts with the newly-opened popup. Close it explicitly.
+        DismissTrayMenu();
+        TogglePopup();
+    }
+
+    private void OnOpenClicked(object sender, RoutedEventArgs e)
+    {
+        DismissTrayMenu();
+        TogglePopup();
+    }
+
+    private void DismissTrayMenu()
+    {
+        if (Resources["TrayIcon"] is TaskbarIcon tray &&
+            tray.ContextMenu is { IsOpen: true } cm)
+        {
+            cm.IsOpen = false;
+        }
+    }
 
     /// <summary>
     /// Rebuilt every time the user right-clicks the tray icon so the
@@ -112,6 +135,7 @@ public partial class App : Application
 
     private void OnPairNewClicked(object sender, RoutedEventArgs e)
     {
+        DismissTrayMenu();
         EnsurePopup();
         _popup!.PositionNearTray();
         _popup.Show();
@@ -127,6 +151,7 @@ public partial class App : Application
         // doesn't have to press a remote button just to switch devices.
         // Fire-and-forget: MainWindow.EnsureSessionAsync surfaces its own
         // error dialogs.
+        DismissTrayMenu();
         EnsurePopup();
         _popup!.SelectStoredDevice(dev.DeviceId);
         _popup.PositionNearTray();

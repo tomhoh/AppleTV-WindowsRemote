@@ -43,7 +43,17 @@ public partial class App : Application
             ToolTipText = "Apple TV Remote",
             NoLeftClickDelay = true,
             ContextMenuMode  = ContextMenuMode.PopupMenu,
-            LeftClickCommand = new RelayCommand(_ => TogglePopup()),
+            LeftClickCommand = new RelayCommand(_ =>
+            {
+                // A context flyout lingering from a prior right-click
+                // doesn't light-dismiss when the user left-clicks the
+                // tray icon (H.NotifyIcon's hidden host owns both,
+                // so Windows doesn't deactivate the flyout), so it
+                // stays on screen until the user interacts with the
+                // popup. Close it explicitly before toggling.
+                DismissTrayFlyout();
+                TogglePopup();
+            }),
         };
         // Without an icon set, H.NotifyIcon registers with the shell but
         // has nothing to draw — the process runs (visible in Task Manager)
@@ -101,7 +111,11 @@ public partial class App : Application
         }
 
         var openItem = new MenuFlyoutItem { Text = "Open" };
-        openItem.Command = new RelayCommand(_ => TogglePopup());
+        openItem.Command = new RelayCommand(_ =>
+        {
+            DismissTrayFlyout();
+            TogglePopup();
+        });
         flyout.Items.Add(openItem);
 
         // Pair-a-new-device moved off the popup into the tray menu —
@@ -110,6 +124,7 @@ public partial class App : Application
         var pairItem = new MenuFlyoutItem { Text = "Pair a new Apple TV…" };
         pairItem.Command = new RelayCommand(_ =>
         {
+            DismissTrayFlyout();
             if (_popup is null)
             {
                 _popup = new MainWindow();
@@ -141,6 +156,7 @@ public partial class App : Application
 
     private void SwitchToDevice(string deviceId)
     {
+        DismissTrayFlyout();
         if (_popup is null)
         {
             _popup = new MainWindow();
@@ -153,6 +169,16 @@ public partial class App : Application
         // need to press a remote button before the switch takes effect.
         // MainWindow.EnsureSessionAsync surfaces its own error dialogs.
         _ = _popup.ConnectSelectedAsync();
+    }
+
+    private void DismissTrayFlyout()
+    {
+        try
+        {
+            if (_trayIcon?.ContextFlyout is Microsoft.UI.Xaml.Controls.Primitives.FlyoutBase fb)
+                fb.Hide();
+        }
+        catch { /* best-effort — Hide can throw if the flyout is mid-close */ }
     }
 
     private void TogglePopup()

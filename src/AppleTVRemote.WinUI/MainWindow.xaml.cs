@@ -655,8 +655,21 @@ public sealed partial class MainWindow : WindowEx
         await DispatchAsync(cmd);
     }
 
+    // Power is a toggle, not a single wake. The Companion protocol
+    // exposes Sleep and Wake as distinct keycodes (not a toggle), so we
+    // alternate ourselves. _hasSentSleep flips on each press and is
+    // reset to false (assume awake) every time a fresh session is
+    // established — you can't be connected to a sleeping Apple TV, so
+    // "just connected" implies awake. Mirrors RemoteSession.dispatchPower
+    // in the Swift port.
+    private bool _hasSentSleep;
+
     private async void OnPowerClicked(object sender, RoutedEventArgs e)
-        => await DispatchAsync(HidCommand.Wake);
+    {
+        var cmd = _hasSentSleep ? HidCommand.Wake : HidCommand.Sleep;
+        _hasSentSleep = !_hasSentSleep;
+        await DispatchAsync(cmd);
+    }
 
     // Home: tap → home screen, hold → tvOS app-switcher. A DispatcherQueueTimer
     // started on press fires at the threshold; if it fires while still held,
@@ -796,6 +809,7 @@ public sealed partial class MainWindow : WindowEx
                 _session   = null;
                 _conn      = null;
                 _activeDevice = null;
+                _hasSentSleep = false; // next session starts assuming awake
                 if (ti is not null)
                     DispatcherQueue?.TryEnqueue(() => { try { ti.Dispose(); } catch { } });
             };
@@ -805,6 +819,8 @@ public sealed partial class MainWindow : WindowEx
             _session       = new CompanionSession(conn);
             _session.NowPlayingUpdated += OnNowPlayingUpdated;
             _activeDevice  = selected;
+            _hasSentSleep  = false; // fresh connect ⇒ TV is awake
+
             _textInput     = new TextInputWindowManager(
                 _session,
                 resolvePopup: () => this,
