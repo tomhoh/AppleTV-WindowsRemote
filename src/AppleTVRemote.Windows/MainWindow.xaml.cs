@@ -565,6 +565,16 @@ public partial class MainWindow : Window
 
     // ─── Connection management ─────────────────────────────────────
 
+    // Serializes EnsureSessionAsync. Without this, rapid button clicks
+    // can race: before the first call's await conn.ConnectAsync()
+    // returns, a second call sees _session still null and spins up
+    // another CompanionConnection. Only the last-to-complete call
+    // wins the _session field; the earlier ones leak their TcpClient
+    // to GC with the socket still open to the Apple TV, which then
+    // tracks several half-paired "unknown" connections at once and
+    // eventually runs out of resources.
+    private readonly SemaphoreSlim _sessionGate = new(1, 1);
+
     private async Task<CompanionSession?> EnsureSessionAsync()
     {
         if (DeviceCombo.SelectedItem is not StoredCredentials selected)
@@ -576,78 +586,89 @@ public partial class MainWindow : Window
         if (_session is not null && _activeDevice?.DeviceId == selected.DeviceId)
             return _session;
 
-        await TeardownActiveAsync();
-
-        if (string.IsNullOrEmpty(selected.Host) || selected.Port <= 0)
-        {
-            MessageBox.Show(
-                "These credentials were created by an older build and don't include the device's host / port.\n" +
-                "Click the + button and re-pair this device to update the stored entry.");
-            return null;
-        }
-
+        await _sessionGate.WaitAsync().ConfigureAwait(true);
         try
         {
-            var conn = new CompanionConnection(selected.Host, selected.Port);
-            // If the TV closes the socket (decryption failure, idle timeout,
-            // reboot) drop our cached session so the next button press
-            // rebuilds it instead of timing out against a dead connection.
-            conn.Closed += (_, _) =>
-            {
-                var ti = _textInput;
-                _textInput = null;
-                _session   = null;
-                _conn      = null;
-                _activeDevice = null;
-                // Note: do NOT reset _hasSentSleep here. Sending Sleep
-                // causes the TV to drop the socket shortly after, which
-                // fires Closed — if we reset here, the next press
-                // dispatches Sleep again instead of Wake, so Wake is
-                // never attempted. Only a successful fresh connect
-                // (below) resets the toggle to "awake".
-                if (ti is not null)
-                    Dispatcher.BeginInvoke(new Action(() => { try { ti.Dispose(); } catch { } }));
-            };
-            await conn.ConnectAsync();
-            await new CompanionPairVerify(conn).RunAsync(selected.Credentials);
-            _conn          = conn;
-            _session       = new CompanionSession(conn);
-            _session.NowPlayingUpdated += OnNowPlayingUpdated;
-            _activeDevice  = selected;
-            _hasSentSleep  = false; // fresh connect ⇒ TV is awake
-            // Snapshot the TV's MAC NOW, while the ARP entry is fresh.
-            // We rely on this for Wake-on-LAN after the TV sleeps —
-            // by then the ARP entry may have already expired.
-            _ = AppleTVProtocol.WakeOnLan.CacheMacForHostAsync(selected.Host);
-            _textInput     = new TextInputWindowManager(
-                _session,
-                resolvePopup: () => this.IsVisible ? this : null,
-                dismissPopup: () => Dispatcher.Invoke(() => this.Hide()));
+            // Re-check inside the gate: a concurrent caller may have
+            // already finished the setup we were about to repeat.
+            if (_session is not null && _activeDevice?.DeviceId == selected.DeviceId)
+                return _session;
+            await TeardownActiveAsync();
 
-            // Run the Companion session-init handshake.
-            // The v0.1.20–22 failures were the pair-verify M4 race (fixed in
-            // v0.1.24), not this code. HID commands happen to work without it,
-            // but app-launcher RPCs (FetchLaunchableApplicationsEvent,
-            // _launchApp) silently time out and the TV closes the socket
-            // ~35 s after the missing _touchStart — exactly the symptom in
-            // the user-supplied wire log after v0.1.26.
-            var clientIdString = System.Text.Encoding.ASCII.GetString(selected.Credentials.ClientIdentifier);
-            // Send whatever controller name was registered with the ATV
-            // during pair-setup M5 (StoredCredentials.ControllerName).
-            // Older credentials paired before that field existed have it
-            // empty; fall back to the machine name so the picker still
-            // shows something identifiable.
-            var controllerName = string.IsNullOrEmpty(selected.ControllerName)
-                ? Environment.MachineName
-                : selected.ControllerName;
-            await _session.SendSessionInitAsync(clientIdString, controllerName);
-            return _session;
+            if (string.IsNullOrEmpty(selected.Host) || selected.Port <= 0)
+            {
+                MessageBox.Show(
+                    "These credentials were created by an older build and don't include the device's host / port.\n" +
+                    "Click the + button and re-pair this device to update the stored entry.");
+                return null;
+            }
+
+            CompanionConnection? conn = null;
+            try
+            {
+                conn = new CompanionConnection(selected.Host, selected.Port);
+                // If the TV closes the socket (decryption failure, idle timeout,
+                // reboot) drop our cached session so the next button press
+                // rebuilds it instead of timing out against a dead connection.
+                conn.Closed += (_, _) =>
+                {
+                    var ti = _textInput;
+                    _textInput = null;
+                    _session   = null;
+                    _conn      = null;
+                    _activeDevice = null;
+                    // Note: do NOT reset _hasSentSleep here. Sending Sleep
+                    // causes the TV to drop the socket shortly after, which
+                    // fires Closed — if we reset here, the next press
+                    // dispatches Sleep again instead of Wake, so Wake is
+                    // never attempted. Only a successful fresh connect
+                    // (below) resets the toggle to "awake".
+                    if (ti is not null)
+                        Dispatcher.BeginInvoke(new Action(() => { try { ti.Dispose(); } catch { } }));
+                };
+                await conn.ConnectAsync();
+                await new CompanionPairVerify(conn).RunAsync(selected.Credentials);
+                _conn          = conn;
+                _session       = new CompanionSession(conn);
+                _session.NowPlayingUpdated += OnNowPlayingUpdated;
+                _activeDevice  = selected;
+                _hasSentSleep  = false; // fresh connect ⇒ TV is awake
+                // Snapshot the TV's MAC NOW, while the ARP entry is fresh.
+                // We rely on this for Wake-on-LAN after the TV sleeps —
+                // by then the ARP entry may have already expired.
+                _ = AppleTVProtocol.WakeOnLan.CacheMacForHostAsync(selected.Host);
+                _textInput     = new TextInputWindowManager(
+                    _session,
+                    resolvePopup: () => this.IsVisible ? this : null,
+                    dismissPopup: () => Dispatcher.Invoke(() => this.Hide()));
+
+                // Run the Companion session-init handshake.
+                var clientIdString = System.Text.Encoding.ASCII.GetString(selected.Credentials.ClientIdentifier);
+                var controllerName = string.IsNullOrEmpty(selected.ControllerName)
+                    ? Environment.MachineName
+                    : selected.ControllerName;
+                await _session.SendSessionInitAsync(clientIdString, controllerName);
+                return _session;
+            }
+            catch (Exception ex)
+            {
+                // Clean up the local conn if we created it but never
+                // promoted it to _conn (e.g. ConnectAsync or pair-verify
+                // threw). Without this the socket stays open to the TV,
+                // which eventually tracks several half-paired "unknown"
+                // connections and runs out of resources.
+                if (conn is not null && !ReferenceEquals(conn, _conn))
+                {
+                    try { await conn.DisposeAsync(); } catch { }
+                }
+                MessageBox.Show($"Failed to connect to {selected.Host}:{selected.Port} — {ex.Message}",
+                    "Apple TV Remote", MessageBoxButton.OK, MessageBoxImage.Error);
+                return null;
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            MessageBox.Show($"Failed to connect to {selected.Host}:{selected.Port} — {ex.Message}",
-                "Apple TV Remote", MessageBoxButton.OK, MessageBoxImage.Error);
-            return null;
+            _sessionGate.Release();
         }
     }
 
