@@ -310,14 +310,14 @@ public partial class PairingWindow : Window
             await conn.ConnectAsync(ct);
             AppendLog("TCP connected, sending M1 to wake PIN display");
 
-            // Swift's UUID().uuidString is UPPERCASE on Apple platforms. The
-            // user reports the Mac launcher works on this exact TV; ours
-            // doesn't even after matching every other wire-format byte.
-            // The last remaining difference in our pair-setup ID and in
-            // _systemInfo's _i / _pubID is the UUID case (Swift uppercase,
-            // C# Guid.ToString() lowercase). Test theory: maybe the TV's
-            // app-launcher permission check is case-sensitive.
-            var pairingId = Encoding.ASCII.GetBytes(Guid.NewGuid().ToString().ToUpperInvariant());
+            // Stable per-installation client identifier. Previously we
+            // generated a fresh Guid.NewGuid() for every pair-setup
+            // attempt, which caused every re-pair to leave an orphan
+            // controller entry on the Apple TV (the TV then polled
+            // those stale entries forever as "unknown" devices). Mac
+            // sibling has always persisted its clientID in UserDefaults
+            // for the same reason — see HAPPairing.swift's clientID.
+            var pairingId = ClientIdStore.LoadOrCreateBytes();
             var setup = new CompanionPairSetup(conn, timeout: TimeSpan.FromMinutes(2));
             var creds = await setup.RunAsync(
                 getPinAsync: async () =>
