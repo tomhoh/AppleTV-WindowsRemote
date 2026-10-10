@@ -121,6 +121,26 @@ public partial class App : Application
         // direction. Reuses MainWindow's existing pair flow.
         menu.Items.Add(new MenuItem { Header = "Pair a new Apple TV…" }.WithClick(OnPairNewClicked));
 
+        // "Manage pairings" submenu — Unpair per device + Clear all.
+        // Kept secondary (nested) so the primary tray flow (click device
+        // = quick-switch) stays simple.
+        if (paired.Length > 0)
+        {
+            var manage = new MenuItem { Header = "Manage pairings" };
+            foreach (var dev in paired)
+            {
+                var name = string.IsNullOrWhiteSpace(dev.DisplayName) ? "Apple TV" : dev.DisplayName;
+                var unpair = new MenuItem { Header = $"Unpair {name}…", Tag = dev };
+                unpair.Click += OnUnpairDeviceClicked;
+                manage.Items.Add(unpair);
+            }
+            manage.Items.Add(new Separator());
+            var clearAll = new MenuItem { Header = "Clear all pairings…" };
+            clearAll.Click += OnClearAllPairingsClicked;
+            manage.Items.Add(clearAll);
+            menu.Items.Add(manage);
+        }
+
         var startup = new MenuItem
         {
             Header      = "Open at login",
@@ -161,6 +181,68 @@ public partial class App : Application
         _popup.Activate();
         ForceForeground(_popup);
         _ = _popup.ConnectSelectedAsync();
+    }
+
+    private void OnUnpairDeviceClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem mi || mi.Tag is not StoredCredentials dev) return;
+        DismissTrayMenu();
+        var displayName = string.IsNullOrWhiteSpace(dev.DisplayName) ? "Apple TV" : dev.DisplayName;
+        var confirm = MessageBox.Show(
+            $"Remove the pairing for \"{displayName}\" from this computer?\n\n" +
+            "This deletes the stored credentials. You'll still need to remove " +
+            "this computer from the Apple TV: Settings → Users and Accounts → " +
+            "Allowed Devices.",
+            "Unpair Apple TV",
+            MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.OK) return;
+
+        // If this device is currently active, close the popup first so
+        // we don't keep sending frames to a credential that no longer
+        // exists.
+        if (_popup?.ActiveDeviceId == dev.DeviceId)
+        {
+            try { _popup.Close(); } catch { }
+            _popup = null;
+        }
+
+        try { _store.Delete(dev.DeviceId); } catch { }
+
+        MessageBox.Show(
+            "Pairing removed from this computer.\n\n" +
+            "Open your Apple TV: Settings → Users and Accounts → Allowed Devices, " +
+            "and delete the entry for this computer to finish cleanup.",
+            "Unpair Apple TV",
+            MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void OnClearAllPairingsClicked(object sender, RoutedEventArgs e)
+    {
+        DismissTrayMenu();
+        var confirm = MessageBox.Show(
+            "Remove ALL stored Apple TV pairings from this computer?\n\n" +
+            "This cannot be undone — you'll need to re-pair each Apple TV. " +
+            "You should also remove this computer from each Apple TV: " +
+            "Settings → Users and Accounts → Allowed Devices.",
+            "Clear all pairings",
+            MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.OK) return;
+
+        if (_popup is not null)
+        {
+            try { _popup.Close(); } catch { }
+            _popup = null;
+        }
+
+        int removed = 0;
+        try { removed = _store.DeleteAll(); } catch { }
+
+        MessageBox.Show(
+            $"Cleared {removed} pairing(s) from this computer.\n\n" +
+            "Open each Apple TV: Settings → Users and Accounts → Allowed Devices, " +
+            "and remove any lingering entries for this computer.",
+            "Clear all pairings",
+            MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void OnToggleStartupClicked(object sender, RoutedEventArgs e)

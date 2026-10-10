@@ -136,6 +136,28 @@ public partial class App : Application
         });
         flyout.Items.Add(pairItem);
 
+        // "Manage pairings" submenu — Unpair per device + Clear all.
+        // Kept secondary (nested under its own submenu) so the primary
+        // tray flow (click device = quick-switch) stays simple.
+        if (paired.Length > 0)
+        {
+            var manage = new MenuFlyoutSubItem { Text = "Manage pairings" };
+            foreach (var dev in paired)
+            {
+                var name = string.IsNullOrWhiteSpace(dev.DisplayName) ? "Apple TV" : dev.DisplayName;
+                var unpair = new MenuFlyoutItem { Text = $"Unpair {name}…" };
+                var devId = dev.DeviceId;
+                var devName = name;
+                unpair.Command = new RelayCommand(_ => UnpairDevice(devId, devName));
+                manage.Items.Add(unpair);
+            }
+            manage.Items.Add(new MenuFlyoutSeparator());
+            var clearAll = new MenuFlyoutItem { Text = "Clear all pairings…" };
+            clearAll.Command = new RelayCommand(_ => ClearAllPairings());
+            manage.Items.Add(clearAll);
+            flyout.Items.Add(manage);
+        }
+
         var startupItem = new ToggleMenuFlyoutItem
         {
             Text      = "Open at login",
@@ -155,6 +177,71 @@ public partial class App : Application
         exitItem.Command = new RelayCommand(_ => ExitApp());
         flyout.Items.Add(exitItem);
     }
+
+    private void UnpairDevice(string deviceId, string displayName)
+    {
+        DismissTrayFlyout();
+        var confirm = MessageBoxW(IntPtr.Zero,
+            $"Remove the pairing for \"{displayName}\" from this computer?\n\n" +
+            "This deletes the stored credentials. You'll still need to remove\n" +
+            "this computer from the Apple TV: Settings → Users and Accounts →\n" +
+            "Allowed Devices.",
+            "Unpair Apple TV", MB_OKCANCEL | MB_ICONWARNING);
+        if (confirm != IDOK) return;
+
+        // If this device is currently active, tear the session down
+        // first so we don't keep sending frames to a credential that
+        // no longer exists.
+        if (_popup?.ActiveDeviceId == deviceId)
+        {
+            try { _popup.Close(); } catch { }
+            _popup = null;
+        }
+
+        try { _store.Delete(deviceId); } catch { }
+
+        MessageBoxW(IntPtr.Zero,
+            "Pairing removed from this computer.\n\n" +
+            "Open your Apple TV: Settings → Users and Accounts → Allowed Devices,\n" +
+            "and delete the entry for this computer to finish cleanup.",
+            "Unpair Apple TV", MB_OK | MB_ICONINFORMATION);
+    }
+
+    private void ClearAllPairings()
+    {
+        DismissTrayFlyout();
+        var confirm = MessageBoxW(IntPtr.Zero,
+            "Remove ALL stored Apple TV pairings from this computer?\n\n" +
+            "This cannot be undone — you'll need to re-pair each Apple TV.\n" +
+            "You should also remove this computer from each Apple TV:\n" +
+            "Settings → Users and Accounts → Allowed Devices.",
+            "Clear all pairings", MB_OKCANCEL | MB_ICONWARNING);
+        if (confirm != IDOK) return;
+
+        if (_popup is not null)
+        {
+            try { _popup.Close(); } catch { }
+            _popup = null;
+        }
+
+        int removed = 0;
+        try { removed = _store.DeleteAll(); } catch { }
+
+        MessageBoxW(IntPtr.Zero,
+            $"Cleared {removed} pairing(s) from this computer.\n\n" +
+            "Open each Apple TV: Settings → Users and Accounts → Allowed Devices,\n" +
+            "and remove any lingering entries for this computer.",
+            "Clear all pairings", MB_OK | MB_ICONINFORMATION);
+    }
+
+    private const uint MB_OK = 0x0;
+    private const uint MB_OKCANCEL = 0x1;
+    private const uint MB_ICONWARNING = 0x30;
+    private const uint MB_ICONINFORMATION = 0x40;
+    private const int  IDOK = 1;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int MessageBoxW(IntPtr hWnd, string text, string caption, uint type);
 
     private void SwitchToDevice(string deviceId)
     {
