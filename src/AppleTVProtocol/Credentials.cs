@@ -106,6 +106,34 @@ public sealed class CredentialStore
     {
         var file = PathFor(deviceId);
         if (File.Exists(file)) File.Delete(file);
+        // Also drop any AirPlay sidecar for this device (currently unused
+        // on Windows but matches the symmetric Save/Delete contract and
+        // keeps a future AirPlay implementation from loading orphaned
+        // credentials).
+        var airplay = Path.Combine(_root, deviceId + ".airplay");
+        if (File.Exists(airplay)) File.Delete(airplay);
+    }
+
+    /// <summary>
+    /// Delete every stored device credential. Caller is responsible
+    /// for tearing down any active session first and refreshing UI
+    /// listings. Does NOT touch the stable client-id file — the user
+    /// wants a clean credential slate, not a new identity (otherwise
+    /// each future re-pair would re-accumulate on the TV).
+    /// </summary>
+    public int DeleteAll()
+    {
+        if (!Directory.Exists(_root)) return 0;
+        int removed = 0;
+        foreach (var path in Directory.EnumerateFiles(_root))
+        {
+            // Only touch json credentials + their airplay sidecars.
+            if (!(path.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ||
+                  path.EndsWith(".airplay", StringComparison.OrdinalIgnoreCase)))
+                continue;
+            try { File.Delete(path); removed++; } catch { }
+        }
+        return removed;
     }
 
     public IReadOnlyList<StoredCredentials> LoadAll()
