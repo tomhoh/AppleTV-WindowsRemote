@@ -6,9 +6,9 @@
 //
 // Ownership: App.xaml.cs constructs a single instance per session and
 // hooks it up when the popup opens a connection. The manager owns the
-// (transient) TextInputWindow itself, positions it centered below the
-// popup, and installs a global mouse-hook so an outside-app click
-// dismisses both the strip and the popup.
+// (transient) TextInputWindow itself, positions it screen-centered
+// (macOS-style), and installs a global mouse-hook so an outside-app
+// click dismisses both the strip and the popup.
 
 using System;
 using System.Windows;
@@ -78,7 +78,7 @@ public sealed class TextInputWindowManager : IDisposable
             _window = null;
         };
 
-        PositionBelowPopup(w);
+        PositionCentered(w);
         _window = w;
         w.Show();
         w.Activate();
@@ -99,22 +99,15 @@ public sealed class TextInputWindowManager : IDisposable
         _mouseHook = null;
     }
 
-    private void PositionBelowPopup(Window w)
+    private void PositionCentered(Window w)
     {
+        // Center the pill on the primary display's work area, slightly
+        // above vertical center for an "attention" feel (macOS Spotlight
+        // sits around 35% from the top). WPF Window.Left/Top are DIPs,
+        // matching SystemParameters.WorkArea's units.
         var workArea = SystemParameters.WorkArea;
-        w.Left = workArea.Left + (workArea.Width - w.Width) / 2;
-        var popup = _resolvePopup();
-        if (popup is { IsVisible: true })
-        {
-            w.Top = popup.Top + popup.Height + 20;
-        }
-        else
-        {
-            w.Top = workArea.Top + (workArea.Height - w.Height) / 2;
-        }
-        // Clamp to work area so we never sit off-screen.
-        if (w.Top + w.Height > workArea.Bottom)
-            w.Top = workArea.Bottom - w.Height - 20;
+        w.Left = workArea.Left + (workArea.Width  - w.Width)  / 2;
+        w.Top  = workArea.Top  + (workArea.Height - w.Height) * 0.35;
     }
 
     private void OnGlobalMouseDown(int screenX, int screenY)

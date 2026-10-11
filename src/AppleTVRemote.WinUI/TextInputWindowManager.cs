@@ -2,8 +2,9 @@
 //
 // WinUI 3 mirror of AppleTVRemote.Windows/TextInputWindowManager.cs. Wires
 // CompanionSession.KeyboardActiveChanged events to a floating
-// TextInputWindow, positions it below the tray popup, and installs a
-// low-level mouse hook so outside-app clicks dismiss both windows.
+// TextInputWindow, positions it screen-centered (macOS-style), and
+// installs a low-level mouse hook so outside-app clicks dismiss both
+// the strip and the tray popup.
 
 using System;
 using AppleTVProtocol;
@@ -16,8 +17,11 @@ namespace AppleTVRemote.WinUI;
 
 public sealed class TextInputWindowManager : IDisposable
 {
-    private const int StripWidth  = 480;
-    private const int StripHeight = 72;
+    // Larger, screen-centered pill matching the macOS sibling's visual
+    // weight. Height is also the CornerRadius×2 inside the window so
+    // the shape is a true capsule.
+    private const int StripWidth  = 720;
+    private const int StripHeight = 88;
 
     private readonly CompanionSession                 _session;
     private readonly Func<WindowEx?>                  _resolvePopup;
@@ -68,7 +72,7 @@ public sealed class TextInputWindowManager : IDisposable
             _window = null;
         };
 
-        PositionBelowPopup(w);
+        PositionCentered(w);
         _window = w;
         w.Activate();
 
@@ -86,29 +90,17 @@ public sealed class TextInputWindowManager : IDisposable
         _mouseHook = null;
     }
 
-    private void PositionBelowPopup(WindowEx w)
+    private void PositionCentered(WindowEx w)
     {
-        // WinUI uses physical pixels for AppWindow.Move/Resize. Work-area
-        // is fetched via DisplayArea.
-        var display = DisplayArea.Primary;
+        // Center the pill on the primary display's work area, slightly
+        // above vertical center for an "attention" feel (macOS Spotlight
+        // sits around 35% from the top). WinUI uses physical pixels for
+        // AppWindow.Move/Resize; DisplayArea gives us the work rect in
+        // the same units.
+        var display  = DisplayArea.Primary;
         var workArea = display.WorkArea;
-        int x = workArea.X + (workArea.Width - StripWidth) / 2;
-        int y;
-        var popup = _resolvePopup();
-        if (popup is not null)
-        {
-            var popRect = popup.AppWindow.Position;
-            var popSize = popup.AppWindow.Size;
-            y = popRect.Y + popSize.Height + 20;
-        }
-        else
-        {
-            y = workArea.Y + (workArea.Height - StripHeight) / 2;
-        }
-        // Clamp so we don't fall off the screen.
-        if (y + StripHeight > workArea.Y + workArea.Height)
-            y = workArea.Y + workArea.Height - StripHeight - 20;
-
+        int x = workArea.X + (workArea.Width  - StripWidth)  / 2;
+        int y = workArea.Y + (workArea.Height - StripHeight) * 35 / 100;
         w.AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(x, y, StripWidth, StripHeight));
     }
 
