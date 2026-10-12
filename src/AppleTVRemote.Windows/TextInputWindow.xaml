@@ -7,39 +7,66 @@
         ShowInTaskbar="False"
         Topmost="True"
         ResizeMode="NoResize"
-        Width="480"
-        Height="72"
+        Width="720"
+        Height="88"
         SizeToContent="Manual">
-    <!-- Whole window content = one rounded translucent capsule
-         holding a big TextBox with "Search" placeholder. Nothing
-         else — no title bar, no close button, no OS chrome. Matches
-         the Mac sibling's borderless-transparent design. -->
-    <Border CornerRadius="14"
+    <!-- Screen-centered pill holding a search glyph + big "Search"
+         TextBox. CornerRadius=44 == Height/2 == true capsule.
+         Translucent frosted-ish background + subtle outline gives
+         the macOS style depth. No title bar / close button. -->
+    <Border CornerRadius="44"
             Background="#E6F6F6F6"
-            BorderThickness="0"
+            BorderBrush="#1A000000"
+            BorderThickness="1"
             SnapsToDevicePixels="True">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24"
+                              ShadowDepth="4"
+                              Direction="270"
+                              Color="#000000"
+                              Opacity="0.18"/>
+        </Border.Effect>
         <Grid>
-            <!-- Placeholder text sits behind the TextBox and is hidden
-                 by the TextBox's IsEmpty binding as soon as the user
-                 types. WPF has no first-class placeholder support. -->
-            <TextBlock x:Name="PlaceholderText"
-                       Text="Search"
-                       Foreground="#66000000"
-                       FontSize="24"
-                       Margin="22,0,20,0"
-                       VerticalAlignment="Center"
-                       IsHitTestVisible="False" />
-            <TextBox x:Name="InputBox"
-                     Background="Transparent"
-                     BorderThickness="0"
-                     FontSize="24"
-                     Padding="20,0"
-                     VerticalContentAlignment="Center"
-                     Foreground="#F0000000"
-                     CaretBrush="#B0000000"
-                     AcceptsReturn="False"
-                     TextChanged="OnTextChanged"
-                     KeyDown="OnKeyDown" />
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Search glyph. Segoe Fluent Icons ships with Win11; on
+                 older Windows the font falls back to the system
+                 default and the glyph still renders as the matching
+                 code point in Segoe MDL2 Assets. -->
+            <TextBlock Grid.Column="0"
+                       Text="&#xE721;"
+                       FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                       FontSize="22"
+                       Foreground="#80000000"
+                       Margin="32,0,8,0"
+                       VerticalAlignment="Center"/>
+
+            <!-- Placeholder text sits behind the TextBox. WPF has no
+                 first-class placeholder; TextChanged collapses it when
+                 the box has any content. -->
+            <Grid Grid.Column="1">
+                <TextBlock x:Name="PlaceholderText"
+                           Text="Search"
+                           Foreground="#66000000"
+                           FontSize="28"
+                           Margin="12,0,32,0"
+                           VerticalAlignment="Center"
+                           IsHitTestVisible="False"/>
+                <TextBox x:Name="InputBox"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         FontSize="28"
+                         Padding="10,0,32,0"
+                         VerticalContentAlignment="Center"
+                         Foreground="#F0000000"
+                         CaretBrush="#B0000000"
+                         AcceptsReturn="False"
+                         TextChanged="OnTextChanged"
+                         KeyDown="OnKeyDown"/>
+            </Grid>
         </Grid>
     </Border>
 </Window>

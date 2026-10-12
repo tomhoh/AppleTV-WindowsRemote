@@ -7,8 +7,8 @@
 //   * CompanionSession fires KeyboardActiveChanged(active: true) when the
 //     TV opens a text field (_tiStarted). App.xaml.cs listens and calls
 //     TextInputWindowManager.Show(session).
-//   * The strip positions itself centered horizontally on the primary
-//     screen work area, vertically below the tray popup.
+//   * The strip positions itself screen-centered (macOS Spotlight
+//     style — see TextInputWindowManager.PositionCentered).
 //   * Typing sends RTI events via CompanionSession.SendTextAsync;
 //     Backspace via SendBackspaceAsync.
 //   * The strip auto-dismisses when the TV closes the field
