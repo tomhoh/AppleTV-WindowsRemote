@@ -32,17 +32,24 @@ public sealed partial class PairingWindow : WindowEx
 
     public StoredCredentials? PairedCredentials { get; private set; }
 
+    /// Branded default so the ATV's Allowed Devices entry identifies
+    /// this install as our app, not the local machine name (which is
+    /// often set to a room name — e.g. "Living Room" — and doesn't
+    /// tell the user which app paired). Overridable in the pairing
+    /// dialog before PIN submission.
+    private const string DefaultControllerName = "Win-AppleTV Remote";
+
     /// <summary>
     /// Snapshot of the controller-name field, updated on the UI thread
     /// whenever <see cref="ClientNameBox"/> changes. Read from the
     /// background pair-setup task without a dispatcher hop.
     /// </summary>
-    private string _clientNameSnapshot = TruncateForATV(Environment.MachineName);
+    private string _clientNameSnapshot = TruncateForATV(DefaultControllerName);
 
     private string ResolveControllerName()
     {
         var raw = _clientNameSnapshot?.Trim() ?? string.Empty;
-        return TruncateForATV(string.IsNullOrEmpty(raw) ? Environment.MachineName : raw);
+        return TruncateForATV(string.IsNullOrEmpty(raw) ? DefaultControllerName : raw);
     }
 
     private static string TruncateForATV(string s) =>

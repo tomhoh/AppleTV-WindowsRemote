@@ -33,16 +33,23 @@ public partial class PairingWindow : Window
 
     public StoredCredentials? PairedCredentials { get; private set; }
 
+    /// Branded default so the entry on the Apple TV reads as our app
+    /// instead of the local machine name. The machine name is often the
+    /// "room name" the user set in Windows (e.g. "Living Room") and
+    /// doesn't tell them which app paired. The user can override in
+    /// the pairing dialog before submitting the PIN.
+    private const string DefaultControllerName = "Win-AppleTV Remote";
+
     /// <summary>
     /// Value from the "show this PC on the Apple TV as" field, trimmed and
-    /// truncated. Falls back to <see cref="Environment.MachineName"/> if the
-    /// user cleared it. Called on the UI thread via <see cref="Dispatcher"/>
-    /// so it stays consistent with what the user sees.
+    /// truncated. Falls back to the branded default if the user cleared
+    /// it. Called on the UI thread via <see cref="Dispatcher"/> so it
+    /// stays consistent with what the user sees.
     /// </summary>
     private string ResolveControllerName()
     {
         string raw = Dispatcher.Invoke(() => ClientNameBox.Text?.Trim() ?? string.Empty);
-        return TruncateForATV(string.IsNullOrEmpty(raw) ? Environment.MachineName : raw);
+        return TruncateForATV(string.IsNullOrEmpty(raw) ? DefaultControllerName : raw);
     }
 
     private static string TruncateForATV(string s) =>
@@ -52,10 +59,12 @@ public partial class PairingWindow : Window
     {
         InitializeComponent();
         DeviceList.ItemsSource = _devices;
-        // Prefill the "show this PC on the Apple TV as" field with the
-        // machine name, capped at 30 chars (matches the ATV Settings row
-        // truncation). The user can edit it before submitting the PIN.
-        ClientNameBox.Text = TruncateForATV(Environment.MachineName);
+        // Prefill with the branded "Win-AppleTV Remote" default so the
+        // ATV's Allowed Devices list identifies this entry as our app
+        // (rather than the Windows machine name, which is often set to
+        // a room name). Capped at 30 chars to match ATV Settings row
+        // truncation. The user can edit it before submitting the PIN.
+        ClientNameBox.Text = TruncateForATV(DefaultControllerName);
         // Apply theme before the visual tree paints to avoid a flash of
         // the light defaults on a dark-mode system.
         ApplyTheme();
