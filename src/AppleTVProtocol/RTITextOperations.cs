@@ -238,6 +238,22 @@ public static class RTITextOperations
     /// <summary>
     /// Pull the current field text from the `_tiD` plist.
     /// Path: `$top.documentState` → `docSt` → `contextBeforeInput`.
+    ///
+    /// **Returns null on current tvOS.** Verified 2026-10-20 by decoding a
+    /// 1901-byte `_tiD` from a live `_tiStart` response: `$top` carries
+    /// `documentTraits`, `sessionUUID` and `documentState`, but the object graph
+    /// holds only keyboard traits (`SuppressSoftwareKeyboard`,
+    /// `RTIInputDelegateClassName`, `UISearchBarTextField`, the field's
+    /// placeholder "Search", the owning bundle id) — there is no `docSt` key
+    /// and no `contextBeforeInput` key anywhere in it. The TV describes the
+    /// *field*, not its contents.
+    ///
+    /// The Swift sibling looks for the same path and so has the same latent
+    /// gap. Kept rather than deleted because the path is correct for whatever
+    /// tvOS it was written against, and a future version may carry it again —
+    /// but nothing should depend on it. A UI that needs the field and its own
+    /// box to agree must assert the whole value instead; see
+    /// CompanionSession.AssertTextAsync.
     /// </summary>
     public static string? ExtractCurrentText(byte[] tiD)
     {

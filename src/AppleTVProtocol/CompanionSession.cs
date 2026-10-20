@@ -683,6 +683,114 @@ public sealed class CompanionSession : IAsyncDisposable
     }
 
     /// <summary>
+    /// Replace the ATV's focused field with <paramref name="text"/>.
+    ///
+    /// The counterpart to <see cref="SendTextAsync"/>, which *inserts* at the
+    /// cursor. Asserting the whole value lets a UI treat its own box as the
+    /// single source of truth, which is the only way to keep the two in step:
+    /// insert-and-backspace diffing relies on knowing what the field already
+    /// holds, and that is exactly what cannot be read back reliably — the
+    /// `contextBeforeInput` path reports nothing on current tvOS.
+    ///
+    /// Uses the cached session UUID rather than refreshing. That is safe for
+    /// the same reason <see cref="SendTextAsync"/> is: the UUID stays valid for
+    /// the life of the field. Only reading the field's *text* needs a refresh,
+    /// and this deliberately never reads it.
+    /// </summary>
+    public async Task AssertTextAsync(string text, CancellationToken cancel = default)
+    {
+        if (_currentTiD is not { } tiD) return;   // no field open
+        var uuid = RTITextOperations.ExtractSessionUuid(tiD);
+        if (uuid is null) return;
+
+        var payload = RTITextOperations.AssertPayload(uuid, text ?? "");
+        var content = new Dictionary<string, object?>
+        {
+            { "_tiV", 1 },
+            { "_tiD", payload },
+        };
+        await SendEventNoWaitAsync("_tiC", content, cancel).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Empty the ATV's currently-focused text field.
+    ///
+    /// Needed because the remote's input strip opens empty while the field on
+    /// screen may already hold text — the strip sends *diffs* against its own
+    /// buffer, so anything typed lands after whatever was already there. This
+    /// gives the UI a way to put both sides back in step.
+    ///
+    /// Shares <see cref="RefreshTextSessionAsync"/> with the text fetch;
+    /// <see cref="SendBackspaceAsync"/> keeps its own copy of that dance
+    /// because it works and rewriting it buys nothing here.
+    /// </summary>
+    public async Task ClearTextAsync(CancellationToken cancel = default)
+    {
+        var refreshed = await RefreshTextSessionAsync(cancel).ConfigureAwait(false);
+        if (refreshed is not { } session) return;
+        var uuid = session.Uuid;
+
+        // Asserting the empty string, rather than sending one backspace per
+        // character: the field can hold an arbitrary amount of text, and a
+        // backspace storm is both slow and racy against the TV echoing each
+        // one back.
+        var payload = RTITextOperations.ClearPayload(uuid);
+        var body = new Dictionary<string, object?>
+        {
+            { "_tiV", 1 },
+            { "_tiD", payload },
+        };
+        await SendEventNoWaitAsync("_tiC", body, cancel).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Stops and restarts the RTI session, returning the fresh session UUID and
+    /// the text the field holds right now.
+    ///
+    /// The assert payload is addressed to a session UUID and a stale one is
+    /// silently ignored by the TV, so anything that asserts has to do this
+    /// first. <see cref="SendBackspaceAsync"/> still has its own copy: it works,
+    /// and rewriting a working path to share code buys nothing here.
+    /// </summary>
+    private async Task<(byte[] Uuid, string Current)?> RefreshTextSessionAsync(CancellationToken cancel)
+    {
+        await SendEventNoWaitAsync("_tiStop", new Dictionary<string, object?>(), cancel).ConfigureAwait(false);
+        var startResp = await SendRequestAsync(
+            "_tiStart",
+            new Dictionary<string, object?>(),
+            timeout: TimeSpan.FromSeconds(5),
+            cancel: cancel).ConfigureAwait(false);
+
+        byte[]? freshTiD = null;
+        if (startResp.TryGetValue("_c", out var contentBoxed) &&
+            ConvertToStringKeyed(contentBoxed) is { } inner &&
+            inner.TryGetValue("_tiD", out var tiBoxed) &&
+            tiBoxed is byte[] tiBytes)
+        {
+            freshTiD = tiBytes;
+        }
+        if (freshTiD is null)
+        {
+            CompanionTrace.Write("RTI", "refresh: _tiStart response carried no _tiD");
+            return null;
+        }
+        _currentTiD = freshTiD;
+
+        var uuid = RTITextOperations.ExtractSessionUuid(freshTiD);
+        if (uuid is null)
+        {
+            CompanionTrace.Write("RTI", $"refresh: no session UUID in _tiD ({freshTiD.Length}B)");
+            return null;
+        }
+
+        // Expected to be null on current tvOS - the field's contents are not
+        // in this plist at all. See RTITextOperations.ExtractCurrentText.
+        var current = RTITextOperations.ExtractCurrentText(freshTiD);
+
+        return (uuid, current ?? "");
+    }
+
+    /// <summary>
     /// Coerce OPACK's various numeric encodings to <see cref="int"/>.
     /// OPACK returns small ints as <see cref="long"/>, sized ints as
     /// <see cref="SizedInt"/>, and very small literals (0–63) as

@@ -14,6 +14,7 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto"/>
             <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
         <FontIcon Grid.Column="0"
                   Glyph="&#xE721;"
@@ -28,10 +29,28 @@
                  FontSize="28"
                  BorderThickness="0"
                  Background="Transparent"
-                 Padding="8,0,28,0"
+                 Padding="8,0,8,0"
                  VerticalAlignment="Stretch"
                  VerticalContentAlignment="Center"
                  TextChanged="OnTextChanged"
                  KeyDown="OnKeyDown"/>
+        <!-- Empties the field on the TV as well as this box. The strip sends
+             diffs against its own buffer, so without this the two drift apart
+             the moment the field already holds text when the strip opens. -->
+        <Button x:Name="ClearButton"
+                Grid.Column="2"
+                Click="OnClearClick"
+                Background="Transparent"
+                BorderThickness="0"
+                Margin="0,0,20,0"
+                Padding="10"
+                CornerRadius="22"
+                VerticalAlignment="Center"
+                ToolTipService.ToolTip="Clear the text on the Apple TV">
+            <FontIcon Glyph="&#xE894;"
+                      FontFamily="Segoe Fluent Icons"
+                      FontSize="18"
+                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+        </Button>
     </Grid>
 </winuiex:WindowEx>

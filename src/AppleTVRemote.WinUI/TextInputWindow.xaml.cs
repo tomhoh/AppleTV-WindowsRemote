@@ -39,7 +39,11 @@ public sealed partial class TextInputWindow : WindowEx
             p.IsResizable   = false;
         }
 
-        InputBox.Loaded  += (_, _) => InputBox.Focus(FocusState.Programmatic);
+        // No attempt to pre-fill from the TV: the field's contents are not
+        // reported in the RTI plist on current tvOS (see
+        // RTITextOperations.ExtractCurrentText), and OnTextChanged asserts the
+        // whole box anyway, so this box is the source of truth.
+        InputBox.Loaded += (_, _) => InputBox.Focus(FocusState.Programmatic);
         Activated += (_, args) =>
         {
             // Auto-dismiss when the strip loses focus. TextInputWindowManager
@@ -54,23 +58,38 @@ public sealed partial class TextInputWindow : WindowEx
     private void OnTextChanged(object sender, TextChangedEventArgs e)
     {
         var current = InputBox.Text ?? string.Empty;
-        var old = _previousText;
+        if (current == _previousText) return;
+
         _previousText = current;
-        if (current.Length > old.Length)
+        _ = _session.AssertTextAsync(current);
+    }
+
+    /// <summary>
+    /// Empties the field on the TV and this box together.
+    ///
+    /// Asserts the empty string through the session rather than sending one
+    /// backspace per character: the field may hold any amount of text, and a
+    /// backspace storm is slow and races the TV echoing each one back.
+    /// </summary>
+    private async void OnClearClick(object sender, RoutedEventArgs e)
+    {
+        try
         {
-            var appended = current.Substring(old.Length);
-            _ = _session.SendTextAsync(appended);
+            await _session.ClearTextAsync();
         }
-        else if (current.Length < old.Length)
+        catch (Exception ex)
         {
-            int removed = old.Length - current.Length;
-            for (int i = 0; i < removed; i++)
-                _ = _session.SendBackspaceAsync();
+            CompanionTrace.Write("RTI", "clear failed: " + ex.Message);
         }
-        else if (current != old)
-        {
-            _ = _session.SendTextAsync(current);
-        }
+
+        // Baseline first, for the same reason as the constructor: this
+        // assignment raises OnTextChanged, and a stale baseline would make the
+        // handler read the change as a deletion and fire backspaces at a field
+        // that is already empty.
+        _previousText = string.Empty;
+        InputBox.Text = string.Empty;
+
+        InputBox.Focus(FocusState.Programmatic);
     }
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
