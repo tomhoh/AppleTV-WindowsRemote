@@ -9,8 +9,9 @@
 //     TextInputWindowManager.Show(session).
 //   * The strip positions itself screen-centered (macOS Spotlight
 //     style — see TextInputWindowManager.PositionCentered).
-//   * Typing sends RTI events via CompanionSession.SendTextAsync;
-//     Backspace via SendBackspaceAsync.
+//   * Every change asserts the whole box via
+//     CompanionSession.AssertTextAsync, so the field on the TV always
+//     mirrors this box exactly.
 //   * The strip auto-dismisses when the TV closes the field
 //     (_tiStopped), the connection drops, the user presses Escape, or
 //     the user clicks outside our app.
@@ -46,26 +47,54 @@ public partial class TextInputWindow : Window
         PlaceholderText.Visibility = current.Length == 0
             ? Visibility.Visible : Visibility.Collapsed;
 
-        // Diff against the previous value: appends → SendText, shrinks →
-        // SendBackspace one-per-char, same-length-different-content →
-        // send the whole new string as a fresh append (paste-replace).
-        var old = _previousText;
+        // Push the whole box rather than the difference.
+        //
+        // Diffing assumed the field started out matching this box. When the
+        // user typed a term, navigated to the results and came back, the field
+        // still held the term while the box opened empty — so everything typed
+        // landed *after* the old text, out of sight and unreachable. Reading
+        // the field back to fix that does not work either; the plist path for
+        // its contents reports nothing on current tvOS (see
+        // RTITextOperations.ExtractCurrentText).
+        //
+        // Asserting makes this box the single source of truth, so the field
+        // always shows exactly what is here. It also stops deletion costing a
+        // _tiStop/_tiStart round trip per character, which is what
+        // SendBackspaceAsync was doing.
+        //
+        // The trade: typing replaces the field rather than appending to it.
+        // That is the right default for a search box, and the only behaviour
+        // that can be made to match what the user sees.
+        if (current == _previousText) return;
+
         _previousText = current;
-        if (current.Length > old.Length)
+        _ = _session.AssertTextAsync(current);
+    }
+
+    /// <summary>
+    /// Empties the field on the TV and this box together.
+    ///
+    /// Asserts the empty string rather than sending one backspace per
+    /// character: the field may hold any amount of text, and a backspace storm
+    /// is slow and races the TV echoing each one back.
+    /// </summary>
+    private async void OnClearClick(object sender, RoutedEventArgs e)
+    {
+        try
         {
-            var appended = current.Substring(old.Length);
-            _ = _session.SendTextAsync(appended);
+            await _session.ClearTextAsync();
         }
-        else if (current.Length < old.Length)
+        catch (Exception ex)
         {
-            int removed = old.Length - current.Length;
-            for (int i = 0; i < removed; i++)
-                _ = _session.SendBackspaceAsync();
+            CompanionTrace.Write("RTI", "clear failed: " + ex.Message);
         }
-        else if (current != old)
-        {
-            _ = _session.SendTextAsync(current);
-        }
+
+        // Baseline first: assigning Text raises OnTextChanged, and a stale
+        // baseline would have it assert again for no reason.
+        _previousText = string.Empty;
+        InputBox.Text = string.Empty;
+
+        InputBox.Focus();
     }
 
     private void OnKeyDown(object sender, KeyEventArgs e)

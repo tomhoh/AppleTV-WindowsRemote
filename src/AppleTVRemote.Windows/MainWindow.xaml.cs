@@ -67,7 +67,37 @@ public partial class MainWindow : Window
     public void PositionNearTray() => TrayWindowPositioner.PositionNearCursor(this);
 
     /// <summary>Click-outside dismissal: same UX as a macOS menu-bar popover.</summary>
-    private void OnDeactivated(object? sender, EventArgs e) => Hide();
+    private void OnDeactivated(object? sender, EventArgs e)
+    {
+        // Stay up while the Apple TV has a text field open. The input strip
+        // activates itself, which deactivates this window — so dismissing here
+        // made the popup vanish the instant the strip appeared, exactly when
+        // the user still needs to see what they are typing into.
+        //
+        // Dismissal is not lost: TextInputWindowManager runs its own mouse hook
+        // that treats both windows as inside and closes the strip and this
+        // popup together on a click outside both.
+        if (KeyboardActive) return;
+
+        Hide();
+    }
+
+    /// <summary>
+    /// Whether the Apple TV currently has a text field open, which is when the
+    /// input strip is on screen and this popup must stay with it.
+    ///
+    /// Read from the live session rather than tracked separately, so it cannot
+    /// drift: CompanionSession sets it from the RTI channel and clears it when
+    /// the TV closes the field.
+    /// </summary>
+    private bool KeyboardActive
+    {
+        get
+        {
+            try { return _session?.KeyboardActive == true; }
+            catch { return false; }
+        }
+    }
 
     private void OnCloseClicked(object sender, RoutedEventArgs e) => Hide();
 

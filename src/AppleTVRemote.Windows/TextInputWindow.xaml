@@ -30,6 +30,7 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <!-- Search glyph. Segoe Fluent Icons ships with Win11; on
@@ -67,6 +68,37 @@
                          TextChanged="OnTextChanged"
                          KeyDown="OnKeyDown"/>
             </Grid>
+
+            <!-- Empties the field on the TV as well as this box. Typing
+                 asserts the whole box, so without a way to empty it there is
+                 no way to drop a term the TV is still holding. Styled flat so
+                 it reads as part of the pill rather than a button on top of
+                 it. -->
+            <Button x:Name="ClearButton"
+                    Grid.Column="2"
+                    Click="OnClearClick"
+                    Margin="0,0,24,0"
+                    Padding="10,6"
+                    BorderThickness="0"
+                    Background="Transparent"
+                    Cursor="Hand"
+                    ToolTip="Clear the text on the Apple TV"
+                    VerticalAlignment="Center">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="22"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Button.Template>
+                <TextBlock Text="&#xE894;"
+                           FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                           FontSize="18"
+                           Foreground="#80000000"/>
+            </Button>
         </Grid>
     </Border>
 </Window>
