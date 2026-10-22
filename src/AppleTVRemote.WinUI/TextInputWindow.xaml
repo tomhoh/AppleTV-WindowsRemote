@@ -3,14 +3,87 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:winuiex="using:WinUIEx">
-    <!-- Screen-centered pill. CornerRadius=44 == Height/2 == a true
-         capsule. LayerFillColorDefaultBrush is theme-aware so the
-         pill shifts with system light/dark; a thin subtle outline
-         gives it the macOS-ish depth. -->
-    <Grid Background="{ThemeResource LayerFillColorDefaultBrush}"
+    <!--
+        Opaque, with the corners rounded by DWM rather than by this markup.
+
+        Transparency was tried properly and abandoned. WinUI has no per-pixel
+        window transparency and this SDK has no TransparentBackdrop; WinUIEx's
+        TransparentTintBackdrop does provide one, but it works through
+        DwmEnableBlurBehind, which is legacy and unreliable on Windows 11 - the
+        window came up transparent and then grew an opaque square about ten
+        seconds later, every time. A GDI region via SetWindowRgn did nothing at
+        all, which makes sense once you remember a WinUI window composites
+        through DirectComposition, so reshaping the Win32 window does not
+        reshape what the compositor draws.
+        
+        So the window is simply opaque and DWM rounds it, which is native,
+        stable and theme-correct. The cost is honest: Windows' corner radius is
+        about 8px, so this is a rounded strip rather than the true capsule the
+        macOS original has. A stable strip beats a capsule that turns square.
+        The CornerRadius below matches DWM's so the outline follows the shape
+        DWM clips to.
+    -->
+    <Grid Background="{ThemeResource SolidBackgroundFillColorBaseAltBrush}"
           BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
           BorderThickness="1"
-          CornerRadius="44">
+          CornerRadius="8">
+        <Grid.Resources>
+            <!--
+                A bare template for the search field, because the stock one
+                cannot be talked out of its chrome.
+
+                Setting BorderThickness and Background on the TextBox does
+                nothing once it has focus: the default template's Focused
+                visual state assigns BorderElement.Background,
+                BorderBrush and BorderThickness from
+                TextControlBackgroundFocused, TextControlBorderBrushFocused
+                and TextControlBorderThemeThicknessFocused (which is
+                1,1,1,2 - the underline). Overriding those keys in the
+                TextBox's own Resources does not help either, because a
+                ThemeResource inside a VisualState setter resolves against the
+                template's scope rather than the templated control's. That was
+                tried first and had no effect at all.
+
+                So the border element is simply not here. There is no
+                BorderElement to paint, no DeleteButton to duplicate the clear
+                button beside it, and no visual states to re-apply anything.
+                What a TextBox actually requires is a ScrollViewer named
+                ContentElement; PlaceholderTextContentPresenter is optional and
+                kept for the "Search" prompt. Both are copied from the stock
+                template in the Windows App SDK's generic.xaml rather than
+                guessed.
+            -->
+            <Style x:Key="PillSearchBoxStyle" TargetType="TextBox">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="TextBox">
+                            <Grid>
+                                <ScrollViewer x:Name="ContentElement"
+                                              Padding="{TemplateBinding Padding}"
+                                              VerticalAlignment="Center"
+                                              HorizontalScrollMode="Disabled"
+                                              HorizontalScrollBarVisibility="Disabled"
+                                              VerticalScrollMode="Disabled"
+                                              VerticalScrollBarVisibility="Disabled"
+                                              IsTabStop="False"
+                                              ZoomMode="Disabled"
+                                              AutomationProperties.AccessibilityView="Raw"/>
+                                <TextBlock x:Name="PlaceholderTextContentPresenter"
+                                           Padding="{TemplateBinding Padding}"
+                                           VerticalAlignment="Center"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           Text="{TemplateBinding PlaceholderText}"
+                                           TextAlignment="{TemplateBinding TextAlignment}"
+                                           IsHitTestVisible="False"/>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </Grid.Resources>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto"/>
             <ColumnDefinition Width="*"/>
@@ -25,13 +98,11 @@
                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
         <TextBox x:Name="InputBox"
                  Grid.Column="1"
+                 Style="{StaticResource PillSearchBoxStyle}"
                  PlaceholderText="Search"
                  FontSize="28"
-                 BorderThickness="0"
-                 Background="Transparent"
                  Padding="8,0,8,0"
                  VerticalAlignment="Stretch"
-                 VerticalContentAlignment="Center"
                  TextChanged="OnTextChanged"
                  KeyDown="OnKeyDown"/>
         <!-- Empties the field on the TV as well as this box. The strip sends
